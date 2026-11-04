@@ -86,34 +86,32 @@ CURATED_DEVLOG_PROJECTS: List[Dict[str, Any]] = [
         ),
     },
     {
-        "dir_name": "JobSeekerGA",
-        "target_file": "src/linkedin_publisher.py",
-        "anchor_keyword": "expect_file_chooser",
+        "dir_name": "JobSeeker",
+        "target_file": "src/ats_analyzer.py",
+        "anchor_keyword": "def ",
         "live_capture": {
             "mode": "terminal_command",
             "cwd": "",
-            "command": ["python3", "main.py", "--scan-summary"],
-            "terminal_title": "JobSeekerGA — Radar de Empleo & Empresas Target en Sevilla"
+            "command": ["python3", "main.py", "--history"],
+            "terminal_title": "JobSeeker — Plataforma HR ATS & Historial de Candidaturas"
         },
-        "display_name": "JobSeekerGA — Automatización Web & Control por Telegram",
-        "domain": "Python, Playwright y Gestión de Sesiones",
-        "tech_stack": ["Python", "Playwright", "Linux", "TelegramAPI"],
-        "default_headline": "Diario de Desarrollo #3 — Por qué fallaban las sesiones persistentes en Playwright y cómo lo solucioné",
+        "display_name": "JobSeeker — Plataforma HR ATS & Automatización de Candidaturas",
+        "domain": "HR Tech, Análisis Semántico ATS, Python y Playwright",
+        "tech_stack": ["Python", "Playwright", "HRTech", "ATS", "TelegramAPI"],
+        "default_headline": "Diario de Desarrollo #3 — Diseñando un motor ATS en Python para evaluar vacantes y optimizar candidaturas",
         "default_context": (
-            "Estoy desarrollando `JobSeekerGA` en Python para automatizar mi flujo de búsqueda de empleo IT en Sevilla y controlar mis publicaciones "
-            "desde Telegram con confirmación previa, sin dejar demonios consumiendo memoria en mi Mac."
+            "Diseñé `JobSeeker` en Python como una solución autónoma de ingeniería de talento que integra un motor analítico ATS "
+            "capaz de clasificar ofertas por taxonomía IT, calcular score de afinidad de 0 a 100% y conectar con recruiters de 2º grado vía Telegram."
         ),
         "default_learning": (
-            "Persistencia nativa del perfil en Chromium y subida de archivos mediante expect_file_chooser()."
+            "Extracción semántica de entidades, gap analysis y ponderación triple de keywords en el título de la vacante."
         ),
         "fallback_snippet": (
-            "with page.expect_file_chooser(timeout=6000) as fc_info:\n"
-            "    try:\n"
-            "        btn.evaluate('el => el.click()')\n"
-            "    except Exception:\n"
-            "        btn.click(force=True)\n"
-            "file_chooser = fc_info.value\n"
-            "file_chooser.set_files(str(image_path))"
+            "# Motor analítico ATS para cálculo de compatibilidad y brechas (gaps)\n"
+            "analysis = ATSAnalyzer.analyze_match(job_title, job_desc, detected_stack)\n"
+            "score = analysis['ats_score']  # 0-100%\n"
+            "matched = analysis['matched_keywords']\n"
+            "gaps = analysis['gaps']"
         ),
     },
     {
