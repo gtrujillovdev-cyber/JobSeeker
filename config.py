@@ -30,11 +30,19 @@ MAX_DAILY_POSTS = int(os.getenv("MAX_DAILY_POSTS", "2"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 # Detección inteligente de navegador: Chrome instalado o Chromium estándar
+CHROMIUM_EXECUTABLE_PATH = os.getenv("CHROMIUM_EXECUTABLE_PATH")
+if CHROMIUM_EXECUTABLE_PATH and not Path(CHROMIUM_EXECUTABLE_PATH).exists():
+    CHROMIUM_EXECUTABLE_PATH = None
+
 CHROME_PATH = Path("/Applications/Google Chrome.app")
-default_channel = "chrome" if CHROME_PATH.exists() else None
+default_channel = "chrome" if CHROME_PATH.exists() and not CHROMIUM_EXECUTABLE_PATH else None
 BROWSER_CHANNEL = os.getenv("BROWSER_CHANNEL", default_channel)
-if BROWSER_CHANNEL in ["", "none", "None"]:
+if BROWSER_CHANNEL in ["", "none", "None"] or CHROMIUM_EXECUTABLE_PATH:
     BROWSER_CHANNEL = None
+
+# Configurar Node.js personalizado si está definido en .env (para compatibilidad macOS legacy)
+if os.getenv("PLAYWRIGHT_NODEJS_PATH"):
+    os.environ["PLAYWRIGHT_NODEJS_PATH"] = os.getenv("PLAYWRIGHT_NODEJS_PATH")
 
 # Telegram
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
