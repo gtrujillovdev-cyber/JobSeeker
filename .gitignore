@@ -1,0 +1,35 @@
+# Entorno Virtual
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Sesiones de navegador y credenciales sensibles (NUNCA SUBIR)
+assets/.browser_profiles/
+.browser_profiles/
+.env
+.env.local
+
+# Salidas, capturas y datos generados en runtime
+output/
+logs/
+data/published_history.json
+data/easy_apply_history.json
+data/engagement_history.json
+data/dev_diary_history.json
+data/pending_drafts.json
+data/pending_easy_apply.json
+data/last_daily_run.json
+*.png
+*.jpg
+*.jpeg
+*.pdf
+!assets/cvs/*.pdf
+!assets/cvs/.gitkeep
+
+# macOS / IDEs
+.DS_Store
+.idea/
+.vscode/
