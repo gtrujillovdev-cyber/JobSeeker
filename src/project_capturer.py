@@ -5,7 +5,7 @@ import subprocess
 import textwrap
 from pathlib import Path
 from typing import Optional
-from config import SCREENSHOTS_DIR, BROWSER_CHANNEL
+from config import SCREENSHOTS_DIR, BROWSER_CHANNEL, CHROMIUM_EXECUTABLE_PATH
 from playwright.sync_api import sync_playwright
 
 class ProjectCapturer:
@@ -34,7 +34,9 @@ class ProjectCapturer:
         output_path = SCREENSHOTS_DIR / filename
         with sync_playwright() as p:
             launch_kwargs = {"headless": True}
-            if BROWSER_CHANNEL:
+            if CHROMIUM_EXECUTABLE_PATH:
+                launch_kwargs["executable_path"] = CHROMIUM_EXECUTABLE_PATH
+            elif BROWSER_CHANNEL:
                 launch_kwargs["channel"] = BROWSER_CHANNEL
             browser = p.chromium.launch(**launch_kwargs)
             page = browser.new_page(viewport={"width": 1280, "height": 760}, device_scale_factor=2)
@@ -257,7 +259,9 @@ class ProjectCapturer:
 </html>"""
         with sync_playwright() as p:
             launch_kwargs = {"headless": True}
-            if BROWSER_CHANNEL:
+            if CHROMIUM_EXECUTABLE_PATH:
+                launch_kwargs["executable_path"] = CHROMIUM_EXECUTABLE_PATH
+            elif BROWSER_CHANNEL:
                 launch_kwargs["channel"] = BROWSER_CHANNEL
             browser = p.chromium.launch(**launch_kwargs)
             page = browser.new_page(viewport={"width": 1200, "height": 675}, device_scale_factor=2)
@@ -464,11 +468,19 @@ class ProjectCapturer:
 </body>
 </html>"""
 
+        launch_kwargs = {"headless": True}
+        if CHROMIUM_EXECUTABLE_PATH:
+            launch_kwargs["executable_path"] = CHROMIUM_EXECUTABLE_PATH
+        elif BROWSER_CHANNEL:
+            launch_kwargs["channel"] = BROWSER_CHANNEL
+
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
+            browser = p.chromium.launch(**launch_kwargs)
             page = browser.new_page(viewport={"width": 1200, "height": 675})
-            page.set_content(html_template)
-            page.screenshot(path=str(output_path))
+            page.set_content(html_template, wait_until="load")
+            time.sleep(0.5)
+            page.evaluate("document.fonts.ready")
+            page.screenshot(path=str(output_path), animations="disabled")
             browser.close()
 
         return output_path
