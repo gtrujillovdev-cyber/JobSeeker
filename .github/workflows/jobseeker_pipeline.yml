@@ -1,0 +1,73 @@
+name: JobSeeker Autonomous Cloud Pipeline
+
+on:
+  schedule:
+    # 08:30 UTC = 09:30 o 10:30 Madrid (Lunes a Viernes)
+    - cron: '30 8 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Acción a ejecutar'
+        required: true
+        default: 'pipeline'
+        type: choice
+        options:
+          - pipeline
+          - publish_pending
+          - check_health
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: Restore Session Cookies
+        env:
+          LINKEDIN_STORAGE_STATE_B64: ${{ secrets.LINKEDIN_STORAGE_STATE_B64 }}
+        run: |
+          mkdir -p assets/.browser_profiles
+          if [ -n "$LINKEDIN_STORAGE_STATE_B64" ]; then
+            echo "$LINKEDIN_STORAGE_STATE_B64" | base64 -d > assets/.browser_profiles/storage_clean.json
+            cp assets/.browser_profiles/storage_clean.json assets/.browser_profiles/storage_state.json
+            echo "Session cookies restored successfully."
+          else
+            echo "ERROR: LINKEDIN_STORAGE_STATE_B64 secret is not set!"
+            exit 1
+          fi
+
+      - name: Execute Autonomous JobSeeker Task
+        env:
+          HEADLESS_BROWSER: "true"
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          MAX_DAILY_POSTS: "1"
+          JOB_SEARCH_KEYWORDS: "Software, Developer, Junior, QA, Data, Python, Backend"
+          JOB_SEARCH_LOCATION: "Sevilla, Andalucía, España"
+          JOB_EXPERIENCE_LEVEL: "Junior"
+          JOB_SCAN_MAX_RESULTS: "15"
+          MAX_DAILY_CONNECTIONS: "5"
+        run: |
+          if [ "${{ github.event.inputs.action }}" = "check_health" ]; then
+            python -c "from src.linkedin_publisher import LinkedInPublisher; res=LinkedInPublisher.check_session_health(); print(res); exit(0 if res.get('ok') else 1)"
+          elif [ "${{ github.event.inputs.action }}" = "publish_pending" ]; then
+            python main.py --publish-scheduled
+          else
+            python main.py --pipeline
+          fi

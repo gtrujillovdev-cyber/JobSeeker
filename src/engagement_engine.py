@@ -5,7 +5,7 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 
 from config import (
-    BROWSER_PROFILE_DIR, STORAGE_STATE_FILE, HEADLESS, BROWSER_CHANNEL,
+    BROWSER_PROFILE_DIR, STORAGE_STATE_FILE, HEADLESS, BROWSER_CHANNEL, CHROMIUM_EXECUTABLE_PATH,
     GEMINI_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 )
 from src.anti_ban import AntiBanValidator
@@ -116,17 +116,8 @@ class EngagementEngine:
 
             print("[Engagement] Pre-buscando perfiles reales de RRHH para mostrar en Telegram...")
             with sync_playwright() as p:
-                launch_kwargs = {
-                    "user_data_dir": str(BROWSER_PROFILE_DIR),
-                    "headless": HEADLESS,
-                    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                    "viewport": {"width": 1280, "height": 900},
-                    "args": ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-                }
-                if BROWSER_CHANNEL:
-                    launch_kwargs["channel"] = BROWSER_CHANNEL
-
-                context = p.chromium.launch_persistent_context(**launch_kwargs)
+                from src.browser_helper import get_playwright_browser_context
+                browser, context = get_playwright_browser_context(p)
                 page = context.pages[0] if context.pages else context.new_page()
 
                 for act in actions:
@@ -189,6 +180,8 @@ class EngagementEngine:
                         continue
 
                 context.close()
+                if browser_instance:
+                    browser_instance.close()
         except Exception as e:
             print(f"[Engagement] Aviso en pre-búsqueda de perfiles: {e}")
 
@@ -382,19 +375,10 @@ class EngagementEngine:
 
         try:
             from playwright.sync_api import sync_playwright
+            from src.browser_helper import get_playwright_browser_context
 
             with sync_playwright() as p:
-                launch_kwargs = {
-                    "user_data_dir": str(BROWSER_PROFILE_DIR),
-                    "headless": HEADLESS,
-                    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                    "viewport": {"width": 1280, "height": 900},
-                    "args": ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-                }
-                if BROWSER_CHANNEL:
-                    launch_kwargs["channel"] = BROWSER_CHANNEL
-
-                context = p.chromium.launch_persistent_context(**launch_kwargs)
+                context, browser_instance = get_playwright_browser_context(p)
                 page = context.pages[0] if context.pages else context.new_page()
                 print(f"[Engagement] Estableciendo sesión en Feed de LinkedIn...")
                 page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=30000)
@@ -421,6 +405,8 @@ class EngagementEngine:
                     results.append(result)
 
                 context.close()
+                if browser_instance:
+                    browser_instance.close()
 
         except Exception as e:
             print(f"[Engagement] Error en Playwright: {e}")

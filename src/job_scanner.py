@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 from urllib.parse import quote_plus
 
 from config import (
-    BROWSER_PROFILE_DIR, STORAGE_STATE_FILE, HEADLESS, BROWSER_CHANNEL,
+    BROWSER_PROFILE_DIR, STORAGE_STATE_FILE, HEADLESS, BROWSER_CHANNEL, CHROMIUM_EXECUTABLE_PATH,
     DATA_DIR, GEMINI_API_KEY,
     JOB_SEARCH_KEYWORDS, JOB_SEARCH_LOCATION, JOB_SCAN_MAX_RESULTS,
     JOB_EXPERIENCE_LEVEL
@@ -115,19 +115,10 @@ class JobScanner:
 
         try:
             from playwright.sync_api import sync_playwright
+            from src.browser_helper import get_playwright_browser_context
 
             with sync_playwright() as p:
-                launch_kwargs = {
-                    "user_data_dir": str(BROWSER_PROFILE_DIR),
-                    "headless": HEADLESS,
-                    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                    "viewport": {"width": 1280, "height": 900},
-                    "args": ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-                }
-                if BROWSER_CHANNEL:
-                    launch_kwargs["channel"] = BROWSER_CHANNEL
-
-                context = p.chromium.launch_persistent_context(**launch_kwargs)
+                browser, context = get_playwright_browser_context(p)
                 page = context.pages[0] if context.pages else context.new_page()
 
                 # Construir URL de busqueda de LinkedIn Jobs

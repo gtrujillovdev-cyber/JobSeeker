@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Optional, List, Union, Dict, Any
 
 from config import (
-    BROWSER_PROFILE_DIR, STORAGE_STATE_FILE, HEADLESS, BROWSER_CHANNEL, SCREENSHOTS_DIR
+    BROWSER_PROFILE_DIR, STORAGE_STATE_FILE, HEADLESS, BROWSER_CHANNEL,
+    CHROMIUM_EXECUTABLE_PATH, SCREENSHOTS_DIR
 )
 from src.anti_ban import AntiBanValidator
 
@@ -62,23 +63,11 @@ class LinkedInPublisher:
         # 3. Publicación real mediante Playwright
         try:
             from playwright.sync_api import sync_playwright
+            from src.browser_helper import get_playwright_browser_context
 
-            print(f"[*] Abriendo contexto persistente de LinkedIn (headless={HEADLESS})...")
+            print(f"[*] Abriendo contexto de navegación de LinkedIn (headless={HEADLESS})...")
             with sync_playwright() as p:
-                launch_kwargs = {
-                    "user_data_dir": str(BROWSER_PROFILE_DIR),
-                    "headless": HEADLESS,
-                    "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-                    "viewport": {"width": 1280, "height": 850},
-                    "args": [
-                        "--disable-blink-features=AutomationControlled",
-                        "--no-sandbox"
-                    ]
-                }
-                if BROWSER_CHANNEL:
-                    launch_kwargs["channel"] = BROWSER_CHANNEL
-
-                context = p.chromium.launch_persistent_context(**launch_kwargs)
+                context, browser_instance = get_playwright_browser_context(p)
                 page = context.pages[0] if context.pages else context.new_page()
                 page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=45000)
                 time.sleep(3)
@@ -89,6 +78,8 @@ class LinkedInPublisher:
                     print(f"[!] La sesión de LinkedIn ha expirado o requiere autenticación (URL: {page.url}).")
                     print("👉 Ejecuta: python scripts/setup_linkedin_session.py para renovarla.")
                     context.close()
+                    if browser_instance:
+                        browser_instance.close()
                     return False
 
                 print("[*] Localizando el disparador de publicación...")
@@ -425,20 +416,16 @@ class LinkedInPublisher:
             return {"ok": False, "reason": "No existe el directorio de perfil de navegador."}
         try:
             from playwright.sync_api import sync_playwright
+            from src.browser_helper import get_playwright_browser_context
             with sync_playwright() as p:
-                launch_kwargs = {
-                    "user_data_dir": str(BROWSER_PROFILE_DIR),
-                    "headless": True,
-                    "args": ["--disable-blink-features=AutomationControlled", "--no-sandbox"]
-                }
-                if BROWSER_CHANNEL:
-                    launch_kwargs["channel"] = BROWSER_CHANNEL
-                context = p.chromium.launch_persistent_context(**launch_kwargs)
+                context, browser_instance = get_playwright_browser_context(p)
                 page = context.pages[0] if context.pages else context.new_page()
                 page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=30000)
                 time.sleep(2)
                 url = page.url.lower()
                 context.close()
+                if browser_instance:
+                    browser_instance.close()
                 if "login" in url or "authwall" in url or "checkpoint" in url:
                     return {"ok": False, "reason": f"Sesión expirada o requiere login ({url})."}
                 return {"ok": True, "reason": "Sesión de LinkedIn activa y saludable."}
