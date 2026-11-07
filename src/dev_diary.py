@@ -87,24 +87,42 @@ CURATED_DEVLOG_PROJECTS: List[Dict[str, Any]] = [
     },
     {
         "dir_name": "JobSeeker",
+        "repo_url": "https://github.com/gtrujillovdev-cyber/JobSeeker",
         "target_file": "src/ats_analyzer.py",
         "anchor_keyword": "def ",
         "live_capture": {
             "mode": "terminal_command",
             "cwd": "",
             "command": ["python3", "main.py", "--history"],
-            "terminal_title": "JobSeeker — Plataforma HR ATS & Historial de Candidaturas"
+            "display_command": "python3 main.py --history",
+            "terminal_title": "JobSeeker — Plataforma HR ATS & Historial de Actividad",
+            "extra_views": [
+                {
+                    "mode": "terminal_command",
+                    "cwd": "",
+                    "command": [
+                        "python3", "-c",
+                        "from src.ats_analyzer import ATSAnalyzer; import json; "
+                        "res = ATSAnalyzer.analyze_match('Backend Python & QA Automation Engineer', "
+                        "'Buscamos perfil con Python, FastAPI, Docker, Linux, Pytest, GitHub Actions, SQL y CI/CD', "
+                        "['Python', 'FastAPI', 'Docker', 'Linux', 'Pytest']); "
+                        "print(json.dumps(res, indent=2, ensure_ascii=False))"
+                    ],
+                    "display_command": "python3 -m src.ats_analyzer --evaluate 'Backend Python & QA Automation Engineer'",
+                    "terminal_title": "JobSeeker — Motor Analítico ATS (Taxonomía IT, Match Score & Gap Analysis)"
+                }
+            ]
         },
         "display_name": "JobSeeker — Plataforma HR ATS & Automatización de Candidaturas",
         "domain": "HR Tech, Análisis Semántico ATS, Python y Playwright",
         "tech_stack": ["Python", "Playwright", "HRTech", "ATS", "TelegramAPI"],
         "default_headline": "Diario de Desarrollo #3 — Diseñando un motor ATS en Python para evaluar vacantes y optimizar candidaturas",
         "default_context": (
-            "Diseñé `JobSeeker` en Python como una solución autónoma de ingeniería de talento que integra un motor analítico ATS "
-            "capaz de clasificar ofertas por taxonomía IT, calcular score de afinidad de 0 a 100% y conectar con recruiters de 2º grado vía Telegram."
+            "Diseñé JobSeeker en Python para evaluar vacantes técnicas automáticamente mediante un motor analítico ATS "
+            "que calcula el porcentaje de afinidad, detecta brechas de skills y gestiona alertas interactivas en Telegram."
         ),
         "default_learning": (
-            "Extracción semántica de entidades, gap analysis y ponderación triple de keywords en el título de la vacante."
+            "Clasificación por taxonomía IT en analyze_match, gap analysis y ponderación triple en el título de la oferta."
         ),
         "fallback_snippet": (
             "# Motor analítico ATS para cálculo de compatibilidad y brechas (gaps)\n"
@@ -298,6 +316,13 @@ class DevDiaryGenerator:
             encoding="utf-8"
         )
 
+    @staticmethod
+    def _resolve_repo_path(dir_name: str) -> Path:
+        if "jobseeker" in dir_name.lower() and BASE_DIR.exists():
+            return BASE_DIR
+        candidate = PROJECTS_ROOT / dir_name
+        return candidate
+
     @classmethod
     def _inspect_repo(cls, project_meta: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -307,12 +332,12 @@ class DevDiaryGenerator:
         - Enumera todos los archivos y funciones principales del proyecto para que cada post
           pueda hablar de un módulo o función distinta y generar su captura dinámica a medida.
         """
-        repo_path = PROJECTS_ROOT / project_meta["dir_name"]
+        repo_path = cls._resolve_repo_path(project_meta["dir_name"])
         commits = []
         recent_files = []
         last_commit_diff = ""
         repo_functions_inventory = []
-        repo_url = ""
+        repo_url = project_meta.get("repo_url", "")
         snippet = project_meta["fallback_snippet"]
         source_file_label = project_meta.get("target_file", "main.py")
 
@@ -586,9 +611,12 @@ DATOS DEL PROYECTO:
 Devuelve SOLO el texto final respetando exactamente esta estructura con línea en blanco entre viñetas, sin comillas.
 """
 
-                for model_name in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
+                import concurrent.futures
+                for model_name in ["gemini-2.5-flash", "gemini-2.0-flash"]:
+                    ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
                     try:
-                        res = client.models.generate_content(model=model_name, contents=prompt)
+                        fut = ex.submit(client.models.generate_content, model=model_name, contents=prompt)
+                        res = fut.result(timeout=8)
                         if res.text and len(res.text.strip()) > 150:
                             cleaned_res = cls._format_clean_post(res.text, hashtags_line=hashtags)
                             if repo_url and repo_url not in cleaned_res:
@@ -596,6 +624,8 @@ Devuelve SOLO el texto final respetando exactamente esta estructura con línea e
                             return cleaned_res
                     except Exception:
                         continue
+                    finally:
+                        ex.shutdown(wait=False, cancel_futures=True)
             except Exception as e:
                 print(f"[DevDiary] Aviso al llamar a Gemini: {e}. Usando plantilla estructurada.")
 
@@ -734,7 +764,7 @@ Devuelve SOLO el texto final respetando exactamente esta estructura con línea e
         """
         entry = cls.pick_next_diary_entry(project_filter=project_filter)
         project_slug = entry["dir_name"].strip().lower().replace(" ", "_")
-        repo_path = PROJECTS_ROOT / entry["dir_name"]
+        repo_path = cls._resolve_repo_path(entry["dir_name"])
 
         print(f"\n📓 [DevDiary] Preparando Borrador #{entry['entry_number']}: {entry['display_name']}")
 

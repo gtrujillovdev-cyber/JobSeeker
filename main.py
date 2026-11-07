@@ -38,9 +38,37 @@ def main():
     parser.add_argument("--history", action="store_true", help="Muestra el historial completo de posts, contactos y candidaturas")
     parser.add_argument("--dev-diary", action="store_true", help="Publica la entrada de hoy del Diario de Desarrollo con Gemini")
     parser.add_argument("--publish-draft", type=str, default=None, help="Publica directamente un borrador aprobado por su draft_id")
+    parser.add_argument("--publish-scheduled", action="store_true", help="Publica todos los borradores programados cuya hora haya llegado")
+    parser.add_argument("--pipeline", action="store_true", help="Ejecuta el pase diario completo (escaneo, conexiones RRHH y borrador Diario)")
     parser.add_argument("--name", type=str, default="GaTDSEQ", help="Nombre del proyecto a promocionar")
 
     args = parser.parse_args()
+
+    if args.publish_scheduled:
+        from datetime import datetime
+        from src.telegram_reviewer import _get_drafts
+        drafts = _get_drafts()
+        now = datetime.now()
+        published_any = False
+        for d_id, d_obj in list(drafts.items()):
+            if d_obj.get("status") == "scheduled":
+                sched_str = d_obj.get("scheduled_for", "")
+                try:
+                    sched_dt = datetime.fromisoformat(sched_str).replace(tzinfo=None)
+                except Exception:
+                    sched_dt = now
+                if now >= sched_dt:
+                    print(f"[*] Publicando borrador programado {d_id}...")
+                    if TelegramReviewer.publish_approved_draft(d_id):
+                        published_any = True
+        if not published_any:
+            print("[*] No había borradores programados pendientes de publicar en este momento.")
+        return
+
+    if args.pipeline:
+        from scripts.daily_pass import run_daily_pass
+        run_daily_pass(force=True)
+        return
 
     if args.history:
         from src.easy_apply import EasyApplyEngine

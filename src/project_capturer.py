@@ -168,11 +168,18 @@ class ProjectCapturer:
                         proc.kill()
 
             elif mode == "terminal_command":
-                cmd = capture_spec.get("command", [])
+                cmd = list(capture_spec.get("command", []))
                 cwd = project_dir / capture_spec.get("cwd", "")
                 title = capture_spec.get("terminal_title", f"{project_dir.name} — zsh")
                 if not cwd.exists():
                     return None
+                venv_py = None
+                for candidate in [cwd / ".venv/bin/python", cwd / "venv/bin/python", project_dir / ".venv/bin/python", project_dir / "venv/bin/python"]:
+                    if candidate.exists():
+                        venv_py = str(candidate)
+                        break
+                if venv_py and cmd and cmd[0] in ("python", "python3"):
+                    cmd = [venv_py] + cmd[1:]
                 res = subprocess.run(
                     cmd,
                     cwd=str(cwd),
@@ -184,8 +191,8 @@ class ProjectCapturer:
                     return None
                 raw_out = res.stdout.strip()
                 if raw_out:
-                    cmd_str = " ".join(cmd)
-                    full_term = f"$ {cmd_str}\n\n{raw_out}"
+                    display_cmd = capture_spec.get("display_command") or " ".join(capture_spec.get("command", []))
+                    full_term = f"$ {display_cmd}\n\n{raw_out}"
                     return cls.generate_terminal_card(
                         project_name=project_dir.name.strip(),
                         terminal_title=title,

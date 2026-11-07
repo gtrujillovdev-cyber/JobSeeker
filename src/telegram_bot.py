@@ -606,6 +606,21 @@ class TelegramBot:
 
                 drafts = _get_drafts()
                 now = datetime.now()
+                today_iso = date.today().isoformat()
+
+                # Generación automática diaria de borrador a partir de las 09:30 si aún no hay borrador ni publicación hoy
+                if (now.hour > 9 or (now.hour == 9 and now.minute >= 30)):
+                    has_today_draft = any(
+                        d_obj.get("created_at", "").startswith(today_iso) or
+                        d_obj.get("published_at", "").startswith(today_iso) or
+                        d_obj.get("status") in ("pending", "scheduled", "publishing")
+                        for d_obj in drafts.values()
+                    )
+                    if not has_today_draft and AntiBanValidator.check_daily_limit():
+                        print(f"[Scheduler] Generando automáticamente el borrador del Diario de Desarrollo de hoy ({today_iso})...")
+                        DevDiaryGenerator.prepare_daily_diary_draft(wait_approval=False)
+                        drafts = _get_drafts()
+
                 for d_id, d_obj in list(drafts.items()):
                     if d_obj.get("status") == "scheduled" and d_obj.get("scheduled_for"):
                         sched_str = d_obj["scheduled_for"]

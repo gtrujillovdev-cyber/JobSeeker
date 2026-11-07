@@ -205,10 +205,13 @@ class LinkedInPublisher:
                 publish_btn = page.locator("button.share-actions__primary-action, button:has-text('Publicar'), button:has-text('Post')").first
                 if publish_btn.count() > 0 and publish_btn.is_enabled():
                     try:
-                        publish_btn.evaluate("el => el.click()")
+                        publish_btn.click(timeout=5000)
                     except Exception:
-                        publish_btn.click(force=True)
-                    time.sleep(6)  # Esperar a que la petición de red termine
+                        try:
+                            publish_btn.evaluate("el => el.click()")
+                        except Exception:
+                            publish_btn.click(force=True)
+                    time.sleep(8)  # Esperar a que la subida de imágenes y petición de red terminen
                     print("[✓] ¡Publicación lanzada exitosamente a tu feed de LinkedIn!")
                     AntiBanValidator.record_publication(project_name, text, str(image_paths[0] if image_paths else ""), status="success")
 
@@ -272,9 +275,9 @@ class LinkedInPublisher:
         }
         try:
             detected_urn = hint_urn
-            for attempt in range(3):
+            for attempt in range(6):
                 page.goto("https://www.linkedin.com/in/me/recent-activity/all/", wait_until="domcontentloaded", timeout=30000)
-                time.sleep(4)
+                time.sleep(4.5)
 
                 body_text = ""
                 try:
@@ -300,12 +303,12 @@ class LinkedInPublisher:
                     return out;
                 }""")
 
-                if urns:
+                # SOLO asignar el URN si el texto de la nueva publicación ya aparece en actividad reciente
+                if urns and (not expected_snippet or expected_snippet.lower() in body_text.lower()):
                     detected_urn = urns[0]
                     result["post_url"] = f"https://www.linkedin.com/feed/update/{detected_urn}/"
-                    if not expected_snippet or expected_snippet.lower() in body_text.lower():
-                        result["verified"] = True
-                        break
+                    result["verified"] = True
+                    break
 
                 # Fallback clásico si existen tarjetas .feed-shared-update-v2
                 post_cards = page.locator("div.feed-shared-update-v2, [data-urn*='urn:li:activity:']")
@@ -319,21 +322,21 @@ class LinkedInPublisher:
                             result["post_url"] = f"https://www.linkedin.com/feed/update/{urn}/"
                         break
 
-                print(f"[LinkedIn] Esperando indexación del nuevo post en actividad reciente (intento {attempt + 1}/3)...")
-                time.sleep(3)
+                print(f"[LinkedIn] Esperando indexación del nuevo post en actividad reciente (intento {attempt + 1}/6)...")
+                time.sleep(4)
 
-            # Si tenemos URL directa de la publicación, abrirla directamente para verificar, comentar y capturar
-            if result["post_url"]:
+            # Si tenemos URL directa de la publicación verificada, abrirla directamente para comentar y capturar
+            if result["verified"] and result["post_url"]:
                 page.goto(result["post_url"], wait_until="domcontentloaded", timeout=30000)
                 time.sleep(3.5)
                 try:
                     post_page_text = page.locator("body").inner_text()
-                    if not expected_snippet or expected_snippet.lower() in post_page_text.lower():
-                        result["verified"] = True
+                    if expected_snippet and expected_snippet.lower() not in post_page_text.lower():
+                        result["verified"] = False
                 except Exception:
-                    result["verified"] = True
+                    pass
 
-            if comment_text and (result["verified"] or result["post_url"]):
+            if comment_text and result["verified"]:
                 print(f"[*] Publicando primer comentario automático en el post verificado: {comment_text[:70]}...")
                 comment_box_selectors = (
                     "div[aria-label*='Editor de texto para crear comentarios'], "
