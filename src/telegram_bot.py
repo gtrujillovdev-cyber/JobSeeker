@@ -10,11 +10,12 @@ Daemon de long-polling que controla todo el pipeline desde el movil:
   /help     - Lista de comandos
 """
 
+import os
 import time
 import json
 import threading
 import traceback
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -31,13 +32,15 @@ from src.copy_generator import CopyGenerator
 from src.project_capturer import ProjectCapturer
 from src.linkedin_publisher import LinkedInPublisher
 from src.engagement_engine import EngagementEngine
-from src.telegram_reviewer import TelegramReviewer, _get_drafts, _save_drafts
+from src.telegram_reviewer import TelegramReviewer, _get_drafts, _save_drafts, expire_stale_drafts
 from src.dev_diary import DevDiaryGenerator
 from src.easy_apply import EasyApplyEngine
 from src.resource_governor import ResourceGovernor
 from config import BROWSER_PROFILE_DIR
 
-# Almacen temporal de acciones de engagement y candidaturas Easy Apply pendientes de aprobacion
+# Almacen temporal y persistente de acciones de engagement y candidaturas Easy Apply pendientes de aprobacion
+PENDING_ENGAGEMENT_FILE = DATA_DIR / "pending_engagement.json"
+DAILY_SCHEDULER_STATE_FILE = DATA_DIR / "daily_scheduler_state.json"
 _pending_engagement_actions = []
 _pending_easy_apply_jobs = []
 
@@ -104,26 +107,75 @@ class TelegramBot:
 
     @classmethod
     def cmd_start(cls):
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "📓 Nuevo borrador", "callback_data": "menu:publish"},
+                    {"text": "📋 Ver borradores", "callback_data": "menu:drafts"}
+                ],
+                [
+                    {"text": "🤝 5 Contactos Sevilla", "callback_data": "menu:engage"},
+                    {"text": "🚀 Vacantes Easy Apply", "callback_data": "menu:apply"}
+                ],
+                [
+                    {"text": "📊 Estado hoy", "callback_data": "menu:status"},
+                    {"text": "🔐 Salud LinkedIn", "callback_data": "menu:health"}
+                ],
+                [
+                    {"text": "📖 Guía rápida", "callback_data": "menu:guia"},
+                    {"text": "🧹 Limpiar borradores", "callback_data": "drafts:cleanup"}
+                ]
+            ]
+        }
         cls._send(
-            "*JobSeekerGA Bot*\n\n"
-            "Control centralizado de tu pipeline de marca personal en LinkedIn.\n\n"
-            "Usa /help para ver los comandos disponibles."
+            "*JobSeekerGA Bot — Panel de Control*\n\n"
+            "Elige una acción directa con los botones o escribe /guia para ver el flujo completo.",
+            reply_markup=keyboard
+        )
+
+    @classmethod
+    def cmd_guia(cls):
+        cls._send(
+            "*📖 GUÍA RÁPIDA DE USO*\n\n"
+            "*1. Publicar un post del Diario:*\n"
+            "• Cada día a las 09:30 llega un borrador nuevo.\n"
+            "• Si quieres pedir uno ahora, usa /publish (o `/publish LawLab`).\n"
+            "• En el borrador pulsa *✅ Publicar ahora* para subirlo al momento, o *🕙 Programar 10:00 AM* para dejarlo en cola.\n"
+            "• Para editar el texto antes de publicar, haz *Responder (Reply)* al mensaje del borrador con el nuevo texto.\n\n"
+            "*2. Borrar o publicar borradores antiguos:*\n"
+            "• Usa /drafts: verás botones directos para *Publicar*, *Programar* o *Descartar* cada borrador activo.\n"
+            "• Usa /clear (o el botón *🧹 Limpiar borradores*) para eliminar de golpe descartados, fallidos, regenerados y mensajes viejos.\n\n"
+            "*3. Contactos RRHH (Sevilla 2º grado) y Vacantes:*\n"
+            "• /engage propone 5 contactos de 2º grado en Sevilla con botones `#1..#5` para desmarcar.\n"
+            "• /apply busca 5 vacantes de Solicitud Sencilla con tu CV adaptado.\n"
+            "• /health verifica en 5s si la sesión de LinkedIn está activa.",
+            reply_markup={
+                "inline_keyboard": [
+                    [
+                        {"text": "📋 Abrir /drafts", "callback_data": "menu:drafts"},
+                        {"text": "📓 Generar /publish", "callback_data": "menu:publish"}
+                    ]
+                ]
+            }
         )
 
     @classmethod
     def cmd_help(cls):
         cls._send(
             "*Comandos disponibles:*\n\n"
-            "/status - Dashboard de actividad del dia\n"
-            "/scan - Escanear ofertas en LinkedIn Jobs\n"
-            "/scan `keywords` - Escanear con keywords custom\n"
+            "/start o /menu - Panel principal con botones\n"
+            "/guia - Guía paso a paso (publicar, editar, limpiar)\n"
+            "/publish `Proyecto` - Generar borrador nuevo\n"
+            "/drafts - Gestionar y publicar borradores\n"
+            "/clear - Limpiar borradores antiguos/descartados\n"
+            "/engage - Proponer 5 contactos en Sevilla (2º grado)\n"
+            "/apply - Buscar vacantes Solicitud Sencilla + CV\n"
+            "/scan `keywords` - Escanear ofertas en LinkedIn Jobs\n"
             "/summary - Resumen de ofertas + ranking skills\n"
-            "/publish `NombreProyecto` - Generar borrador de post\n"
-            "/engage - Proponer plan de engagement (5 conexiones RRHH)\n"
-            "/apply - Buscar vacantes Solicitud Sencilla + CV adaptado\n"
-            "/history - Historial completo: posts, contactos y candidaturas\n"
+            "/status - Dashboard de actividad del dia\n"
+            "/history - Historial completo (posts, RRHH, vacantes)\n"
             "/limits - Ver limites anti-ban restantes\n"
-            "/drafts - Ver borradores pendientes\n"
+            "/health - Verificar sesion de LinkedIn\n"
             "/help - Esta ayuda"
         )
 
@@ -228,14 +280,52 @@ class TelegramBot:
 
     @classmethod
     def cmd_publish(cls, project_name: str = ""):
+        drafts = expire_stale_drafts(max_age_hours=24.0)
+        for d_id, d in drafts.items():
+            st = d.get("status", "")
+            if st in ("scheduled", "publishing"):
+                sched_when = d.get("scheduled_for", "10:00")[:16].replace("T", " ")
+                cls._send(
+                    f"🕙 *Ya hay una publicación programada:* `{d_id}` ({d.get('project_name', '')})\n"
+                    f"⏰ Programada para: *{sched_when}*\n\n"
+                    f"No se volverá a generar otra hasta que se publique o la canceles.",
+                    reply_markup={
+                        "inline_keyboard": [[
+                            {"text": "📋 Ver /drafts", "callback_data": "menu:drafts"},
+                            {"text": "❌ Cancelar programada", "callback_data": f"reject:{d_id}"}
+                        ]]
+                    }
+                )
+                return
+            if st == "pending":
+                cls._send(
+                    f"⏳ *Ya existe un borrador pendiente:* `{d_id}` ({d.get('project_name', '')})\n\n"
+                    f"Para evitar duplicados o acumular borradores, decide qué hacer con este primero:",
+                    reply_markup={
+                        "inline_keyboard": [
+                            [
+                                {"text": "✅ Publicar ahora", "callback_data": f"approve:{d_id}"},
+                                {"text": "🕙 Programar 10:00", "callback_data": f"schedule10:{d_id}"}
+                            ],
+                            [
+                                {"text": "🔄 Cambiar enfoque", "callback_data": f"regen:{d_id}"},
+                                {"text": "❌ Descartar", "callback_data": f"reject:{d_id}"}
+                            ]
+                        ]
+                    }
+                )
+                return
+
         cls._send(f"📓 Generando borrador del Diario de Desarrollo {f'({project_name})' if project_name else ''} con captura de código real...")
 
         def _run():
             try:
-                DevDiaryGenerator.prepare_daily_diary_draft(
+                res = DevDiaryGenerator.prepare_daily_diary_draft(
                     wait_approval=False,
                     project_filter=project_name if project_name else None
                 )
+                if not res:
+                    cls._send("⛔ No se generó borrador nuevo (ya hay uno activo/programado o se agotaron píldoras inéditas en este alcance).")
             except Exception as e:
                 cls._send(f"Error generando borrador:\n`{traceback.format_exc()[-500:]}`")
 
@@ -254,6 +344,13 @@ class TelegramBot:
 
                 global _pending_engagement_actions
                 _pending_engagement_actions = actions
+                try:
+                    PENDING_ENGAGEMENT_FILE.write_text(
+                        json.dumps(_pending_engagement_actions, indent=2, ensure_ascii=False),
+                        encoding="utf-8"
+                    )
+                except Exception:
+                    pass
 
                 text, keyboard = EngagementEngine._build_engagement_message_and_keyboard(actions)
                 cls._send(text, reply_markup=keyboard)
@@ -317,26 +414,122 @@ class TelegramBot:
         cls._send("\n".join(lines))
 
     @classmethod
+    def _delete_telegram_message(cls, chat_id: Any, message_id: Any) -> bool:
+        if not chat_id or not message_id:
+            return False
+        try:
+            r = http.post(
+                f"{cls.BASE_URL}/deleteMessage",
+                json={"chat_id": chat_id, "message_id": message_id},
+                timeout=8
+            )
+            return r.status_code == 200 and r.json().get("ok", False)
+        except Exception:
+            return False
+
+    @classmethod
     def cmd_drafts(cls):
         drafts = _get_drafts()
         if not drafts:
             cls._send("No hay borradores guardados.")
             return
 
-        lines = ["*BORRADORES*\n"]
-        for d_id, d in list(drafts.items())[-10:]:
-            status_emoji = {
-                "pending": "⏳",
-                "scheduled": "🕙",
-                "published": "✅",
-                "rejected": "🗑",
-                "failed": "❌"
-            }.get(d.get("status", ""), "❓")
-            sched_info = f" -> {d.get('scheduled_for', '')[:16]}" if d.get("status") == "scheduled" else ""
-            lines.append(f"{status_emoji} `{d_id}` - {d.get('project_name', '?')} ({d.get('status', '?')}{sched_info})")
-            lines.append(f"   {d.get('created_at', '')[:16]}")
+        active_statuses = {"pending", "scheduled", "failed", "publishing"}
+        active_items = [
+            (d_id, d) for d_id, d in drafts.items()
+            if d.get("status") in active_statuses
+        ]
+        archived_items = [
+            (d_id, d) for d_id, d in drafts.items()
+            if d.get("status") not in active_statuses
+        ]
 
-        cls._send("\n".join(lines))
+        lines = ["*GESTOR DE BORRADORES*\n"]
+        keyboard_rows = []
+
+        if active_items:
+            lines.append(f"*Activos / listos ({len(active_items)}):*")
+            for d_id, d in active_items[-5:]:
+                st = d.get("status", "pending")
+                emoji = {"pending": "⏳", "scheduled": "🕙", "failed": "❌", "publishing": "🔄"}.get(st, "⏳")
+                sched_info = f" -> {d.get('scheduled_for', '')[:16]}" if st == "scheduled" else ""
+                proj = d.get("project_name", "?")
+                lines.append(f"{emoji} `{d_id}` · *{proj}* ({st}{sched_info})")
+                lines.append(f"   _{d.get('created_at', '')[:16]}_")
+                keyboard_rows.append([
+                    {"text": f"✅ Publicar {d_id}", "callback_data": f"approve:{d_id}"},
+                    {"text": f"🕙 10:00", "callback_data": f"schedule10:{d_id}"},
+                    {"text": f"🗑 Borrar", "callback_data": f"reject:{d_id}"}
+                ])
+        else:
+            lines.append("_No hay borradores pendientes ahora mismo. Usa /publish para crear uno._")
+
+        if archived_items:
+            pub_cnt = sum(1 for _, d in archived_items if d.get("status") == "published")
+            stale_cnt = len(archived_items) - pub_cnt
+            lines.append(f"\n📦 *Histórico:* {pub_cnt} publicados · {stale_cnt} descartados/antiguos")
+
+        keyboard_rows.append([
+            {"text": "🧹 Limpiar borradores antiguos", "callback_data": "drafts:cleanup"},
+            {"text": "📓 Nuevo borrador", "callback_data": "menu:publish"}
+        ])
+
+        cls._send("\n".join(lines), reply_markup={"inline_keyboard": keyboard_rows})
+
+    @classmethod
+    def cmd_clear_drafts(cls, silent_if_empty: bool = False):
+        """Elimina borradores descartados, regenerados, fallidos y pendientes duplicados antiguos, preservando los publicados."""
+        drafts = _get_drafts()
+        if not drafts:
+            if not silent_if_empty:
+                cls._send("No hay borradores antiguos para limpiar.")
+            return
+
+        # Identificar el borrador pending/scheduled más reciente para no perder el actual si existe
+        active_candidates = [
+            (d_id, d) for d_id, d in drafts.items()
+            if d.get("status") in ("pending", "scheduled")
+        ]
+        latest_active_id = active_candidates[-1][0] if active_candidates else None
+
+        kept: Dict[str, Any] = {}
+        removed_ids = []
+        deleted_tg_msgs = 0
+
+        for d_id, d in drafts.items():
+            st = d.get("status", "")
+            if st == "published" or d_id == latest_active_id:
+                kept[d_id] = d
+            else:
+                removed_ids.append(d_id)
+                if d.get("telegram_message_id") and TELEGRAM_CHAT_ID:
+                    if cls._delete_telegram_message(TELEGRAM_CHAT_ID, d.get("telegram_message_id")):
+                        deleted_tg_msgs += 1
+
+        _save_drafts(kept)
+
+        # Preservar historial publicado y memoria de píldoras ya vistas/descartadas (rejected/regenerated/expired)
+        history_file = DATA_DIR / "dev_diary_history.json"
+        if history_file.exists():
+            try:
+                hist = json.loads(history_file.read_text(encoding="utf-8"))
+                preserve_statuses = {"published", "rejected", "regenerated", "expired"}
+                cleaned_hist = [
+                    h for h in hist
+                    if h.get("status") in preserve_statuses or h.get("draft_id") == latest_active_id
+                ]
+                history_file.write_text(json.dumps(cleaned_hist, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
+
+        kept_active_msg = f"\n✅ Activo conservado: `{latest_active_id}`" if latest_active_id else ""
+        tg_msg_note = f"\n🗑 Mensajes eliminados del chat: {deleted_tg_msgs}" if deleted_tg_msgs else ""
+        cls._send(
+            f"🧹 *Limpieza completada:* {len(removed_ids)} borrador(es) antiguo(s) eliminado(s).{tg_msg_note}{kept_active_msg}",
+            reply_markup={
+                "inline_keyboard": [[{"text": "📋 Ver /drafts", "callback_data": "menu:drafts"}]]
+            }
+        )
 
     @classmethod
     def cmd_history(cls):
@@ -393,9 +586,12 @@ class TelegramBot:
         cls._send("🔍 Verificando salud de la sesión persistente de LinkedIn...")
 
         def _run():
+            from src.browser_helper import get_li_at_expiry_days
             status = LinkedInPublisher.check_session_health()
             icon = "✅" if status.get("ok") else "⚠️"
-            cls._send(f"{icon} *Estado de Sesión LinkedIn:*\n{status.get('reason', '')}")
+            days_left = get_li_at_expiry_days()
+            ttl_line = f"\n🕒 Validez cookie `li_at`: *{days_left:.0f} días restantes*" if days_left is not None else ""
+            cls._send(f"{icon} *Estado de Sesión LinkedIn:*\n{status.get('reason', '')}{ttl_line}")
 
         threading.Thread(target=_run, daemon=True).start()
 
@@ -407,7 +603,10 @@ class TelegramBot:
         data = callback_query.get("data", "")
         message = callback_query.get("message", {})
         message_id = message.get("message_id")
-        chat_id = message.get("chat", {}).get("id")
+        chat_id = message.get("chat", {}).get("id") or callback_query.get("from", {}).get("id")
+
+        ts = datetime.now().strftime("%H:%M:%S")
+        print(f"[{ts}] [Callback] data='{data}' chat_id={chat_id} msg_id={message_id}")
 
         if ":" not in data:
             cls._answer_callback(cb_id, "Accion no reconocida.")
@@ -425,14 +624,42 @@ class TelegramBot:
         elif action == "regen":
             cls._answer_callback(cb_id, "Regenerando enfoque y capturas...")
             cls._remove_buttons(chat_id, message_id)
-            cls._send(f"🔄 Regenerando borrador `{target}` con otro módulo/función del proyecto...")
-            threading.Thread(target=DevDiaryGenerator.regenerate_draft_by_id, args=(target,), daemon=True).start()
+            cls._send(f"🔄 Regenerando borrador `{target}` con otro enfoque o proyecto...")
+            def _run_regen():
+                try:
+                    new_id = DevDiaryGenerator.regenerate_draft_by_id(target)
+                    if not new_id:
+                        cls._send("⚠️ No se pudo generar un enfoque nuevo (revisa /drafts o si hay una publicación programada).")
+                except Exception as e_reg:
+                    cls._send(f"Error regenerando enfoque:\n`{str(e_reg)[:400]}`")
+            threading.Thread(target=_run_regen, daemon=True).start()
         elif action == "reject":
             cls._handle_reject_draft(cb_id, target, chat_id, message_id)
         elif action == "engage":
             cls._handle_engage_decision(cb_id, target, chat_id, message_id)
         elif action == "apply":
             cls._handle_apply_decision(cb_id, target, chat_id, message_id)
+        elif action == "drafts" and target == "cleanup":
+            cls._answer_callback(cb_id, "Limpiando borradores antiguos...")
+            cls.cmd_clear_drafts()
+        elif action == "menu":
+            cls._answer_callback(cb_id, "Ejecutando...")
+            if target == "publish":
+                cls.cmd_publish()
+            elif target == "drafts":
+                cls.cmd_drafts()
+            elif target == "engage":
+                cls.cmd_engage()
+            elif target == "apply":
+                cls.cmd_apply()
+            elif target == "status":
+                cls.cmd_status()
+            elif target == "health":
+                cls.cmd_health()
+            elif target == "guia":
+                cls.cmd_guia()
+            else:
+                cls.cmd_start()
         else:
             cls._answer_callback(cb_id, "Accion desconocida.")
 
@@ -440,7 +667,8 @@ class TelegramBot:
     def _handle_approve_draft(cls, cb_id: str, draft_id: str, chat_id: int, message_id: int):
         drafts = _get_drafts()
         if draft_id not in drafts:
-            cls._answer_callback(cb_id, "Borrador no encontrado o expirado.")
+            cls._answer_callback(cb_id, "Borrador no encontrado.")
+            cls._send(f"⚠️ El borrador `{draft_id}` no se encuentra en la cola de borradores activos (usa /drafts para ver los disponibles).")
             return
 
         draft = drafts[draft_id]
@@ -459,23 +687,55 @@ class TelegramBot:
     @classmethod
     def _handle_reject_draft(cls, cb_id: str, draft_id: str, chat_id: int, message_id: int):
         drafts = _get_drafts()
-        if draft_id in drafts:
-            drafts[draft_id]["status"] = "rejected"
-            _save_drafts(drafts)
+        old = drafts.pop(draft_id, None)
+        _save_drafts(drafts)
 
-        cls._answer_callback(cb_id, "Borrador descartado.")
+        history_file = DATA_DIR / "dev_diary_history.json"
+        if history_file.exists():
+            try:
+                hist = json.loads(history_file.read_text(encoding="utf-8"))
+                found = False
+                for h in hist:
+                    if h.get("draft_id") == draft_id and h.get("status") != "published":
+                        h["status"] = "rejected"
+                        found = True
+                if not found and old and old.get("pill_id"):
+                    hist.append({
+                        "draft_id": draft_id,
+                        "date": datetime.now().isoformat(),
+                        "dir_name": old.get("project_name", "").split("·")[-1].strip(),
+                        "pill_id": old.get("pill_id"),
+                        "status": "rejected",
+                    })
+                history_file.write_text(json.dumps(hist, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
+
+        cls._answer_callback(cb_id, "Borrador descartado y eliminado.")
         cls._remove_buttons(chat_id, message_id)
-        cls._send(f"Borrador `{draft_id}` descartado.")
+        cls._send(f"🗑 Borrador `{draft_id}` descartado y eliminado definitivamente.")
 
     @classmethod
     def _handle_engage_decision(cls, cb_id: str, decision: str, chat_id: int, message_id: int):
         global _pending_engagement_actions
+        if not _pending_engagement_actions and PENDING_ENGAGEMENT_FILE.exists():
+            try:
+                _pending_engagement_actions = json.loads(PENDING_ENGAGEMENT_FILE.read_text(encoding="utf-8"))
+            except Exception:
+                pass
 
         if decision.startswith("toggle_"):
             try:
                 idx = int(decision.split("_")[1])
                 if 0 <= idx < len(_pending_engagement_actions):
                     _pending_engagement_actions[idx]["enabled"] = not _pending_engagement_actions[idx].get("enabled", True)
+                    try:
+                        PENDING_ENGAGEMENT_FILE.write_text(
+                            json.dumps(_pending_engagement_actions, indent=2, ensure_ascii=False),
+                            encoding="utf-8"
+                        )
+                    except Exception:
+                        pass
                     new_text, new_kb = EngagementEngine._build_engagement_message_and_keyboard(_pending_engagement_actions)
                     http.post(
                         f"{cls.BASE_URL}/editMessageText",
@@ -588,24 +848,185 @@ class TelegramBot:
             cls._answer_callback(cb_id, "Candidaturas canceladas.")
             cls._send("❌ Envío de candidaturas de Solicitud Sencilla cancelado.")
 
+    @staticmethod
+    def _update_heartbeat():
+        """Actualiza el timestamp de heartbeat en data/heartbeat.txt (patrón armonizado con GTAVIHub en mbp1)."""
+        try:
+            hb_file = DATA_DIR / "heartbeat.txt"
+            hb_file.write_text(str(int(time.time())), encoding="utf-8")
+        except Exception:
+            pass
+
+    @staticmethod
+    def _business_days_since(last_date: date, current_date: date) -> int:
+        """Cuenta cuántos días laborales (lunes a viernes) han pasado después de last_date hasta current_date."""
+        if current_date <= last_date:
+            return 0
+        count = 0
+        cursor = last_date + timedelta(days=1)
+        while cursor <= current_date:
+            if cursor.weekday() < 5:
+                count += 1
+            cursor += timedelta(days=1)
+        return count
+
+    @classmethod
+    def _should_generate_diary_today(
+        cls,
+        drafts: Dict[str, Any],
+        today: Optional[date] = None,
+        interval_business_days: Optional[int] = None
+    ) -> bool:
+        """
+        Determina si hoy toca generar un nuevo borrador automático del Diario de Desarrollo:
+        - Solo en días laborales (lunes a viernes).
+        - Solo si no hay ya un borrador activo/creado hoy (pending, scheduled, publishing).
+        - Respetando la cadencia de cada N días laborales (por defecto 3 días laborales) desde la última publicación.
+        """
+        today = today or date.today()
+        if today.weekday() >= 5:
+            return False
+
+        if interval_business_days is None:
+            try:
+                interval_business_days = int(os.getenv("DEV_DIARY_INTERVAL_BUSINESS_DAYS", "3"))
+            except Exception:
+                interval_business_days = 3
+
+        today_iso = today.isoformat()
+        has_active_or_today = any(
+            d_obj.get("created_at", "").startswith(today_iso)
+            or d_obj.get("published_at", "").startswith(today_iso)
+            or d_obj.get("status") in ("pending", "scheduled", "publishing")
+            for d_obj in drafts.values()
+        )
+        if has_active_or_today:
+            return False
+
+        # Buscar la fecha de la última publicación real en borradores o historial
+        last_pub_dates = []
+        for d_obj in drafts.values():
+            if d_obj.get("status") == "published":
+                dt_str = (d_obj.get("published_at") or d_obj.get("created_at") or "")[:10]
+                if len(dt_str) == 10:
+                    try:
+                        last_pub_dates.append(date.fromisoformat(dt_str))
+                    except Exception:
+                        pass
+
+        for rec in AntiBanValidator.get_records():
+            if rec.get("status") == "success":
+                dt_str = (rec.get("date") or "")[:10]
+                if len(dt_str) == 10:
+                    try:
+                        last_pub_dates.append(date.fromisoformat(dt_str))
+                    except Exception:
+                        pass
+
+        if not last_pub_dates:
+            return True
+
+        latest_pub = max(last_pub_dates)
+        return cls._business_days_since(latest_pub, today) >= interval_business_days
+
     @classmethod
     def _scheduler_worker(cls):
         """
-        Hilo daemon que comprueba cada 45 segundos si hay algún borrador en pending_drafts.json
-        con status='scheduled' cuya hora programada (scheduled_for) ya haya llegado,
-        publicándolo automáticamente y ejecutando las 5 solicitudes de conexión diarias.
-        Además, ejecuta la autorregulación periódica de memoria y purga de temporales.
+        Hilo daemon de automatización diaria (Lunes a Viernes):
+        - 09:30 AM (cada 3 días laborales): genera el borrador del Diario de Desarrollo para aprobar/programar.
+        - 09:35 AM (diario laboral): escanea Sevilla y propone 5 contactos de 2º grado en Telegram.
+        - 09:40 AM (diario laboral): busca 5 vacantes Easy Apply + CV adaptado y las propone en Telegram.
+        - 10:00 AM (o cuando toque scheduled_for): publica automáticamente el borrador programado.
         """
         loops_counter = 0
         while True:
             try:
+                cls._update_heartbeat()
                 loops_counter += 1
                 # Cada ~15 minutos (20 ciclos de 45s) forzar barrido de memoria y purga de temporales
                 if loops_counter % 20 == 0:
                     ResourceGovernor.run_full_cleanup(profile_dir=BROWSER_PROFILE_DIR)
 
-                drafts = _get_drafts()
+                drafts = expire_stale_drafts(max_age_hours=24.0)
                 now = datetime.now()
+                today_obj = now.date()
+                today_iso = today_obj.isoformat()
+                is_workday = today_obj.weekday() < 5
+
+                # Cargar estado compartido del scheduler (latidos, propuestas RRHH, Easy Apply)
+                sched_state = {}
+                if DAILY_SCHEDULER_STATE_FILE.exists():
+                    try:
+                        sched_state = json.loads(DAILY_SCHEDULER_STATE_FILE.read_text(encoding="utf-8"))
+                    except Exception:
+                        sched_state = {}
+
+                # 0. Latido preventivo de sesión LinkedIn cada 8 horas (7 días/semana)
+                now_ts = time.time()
+                last_hb_ts = float(sched_state.get("last_session_heartbeat_ts", 0) or 0)
+                if (now_ts - last_hb_ts) >= 28800:
+                    sched_state["last_session_heartbeat_ts"] = now_ts
+                    DAILY_SCHEDULER_STATE_FILE.write_text(json.dumps(sched_state, indent=2), encoding="utf-8")
+                    try:
+                        from scripts.session_keeper import run_session_heartbeat
+                        run_session_heartbeat(notify_on_ok=False)
+                    except Exception as e_hb:
+                        print(f"[Scheduler] Aviso en heartbeat de sesión: {e_hb}")
+                    finally:
+                        ResourceGovernor.run_full_cleanup(profile_dir=BROWSER_PROFILE_DIR)
+
+                # 1. Diario de Desarrollo cada 3 días laborales a partir de las 09:30 AM
+                if is_workday and (now.hour > 9 or (now.hour == 9 and now.minute >= 30)):
+                    if cls._should_generate_diary_today(drafts, today=today_obj) and AntiBanValidator.check_daily_limit():
+                        print(f"[Scheduler] Toca entrada del Diario de Desarrollo (cadencia cada 3 días laborales, {today_iso})...")
+                        DevDiaryGenerator.prepare_daily_diary_draft(wait_approval=False)
+                        drafts = _get_drafts()
+
+                # 2. Propuesta diaria automática de 5 Contactos RRHH en Sevilla (L-V a partir de las 09:35 AM)
+                if is_workday and (now.hour > 9 or (now.hour == 9 and now.minute >= 35)):
+                    if sched_state.get("hr_proposed_date") != today_iso:
+                        sched_state["hr_proposed_date"] = today_iso
+                        DAILY_SCHEDULER_STATE_FILE.write_text(json.dumps(sched_state, indent=2), encoding="utf-8")
+                        eng_today = AntiBanValidator.get_today_engagement_summary()
+                        if eng_today.get("connection", 0) < MAX_DAILY_CONNECTIONS:
+                            print(f"[Scheduler] Escaneando ofertas y preparando propuesta diaria de 5 contactos RRHH ({today_iso})...")
+                            try:
+                                if not JobScanner.get_today_results():
+                                    JobScanner.scan()
+                                actions = EngagementEngine.propose_actions()
+                                if actions:
+                                    global _pending_engagement_actions
+                                    _pending_engagement_actions = actions
+                                    PENDING_ENGAGEMENT_FILE.write_text(
+                                        json.dumps(_pending_engagement_actions, indent=2, ensure_ascii=False),
+                                        encoding="utf-8"
+                                    )
+                                    text_msg, kb_msg = EngagementEngine._build_engagement_message_and_keyboard(actions)
+                                    cls._send(text_msg, reply_markup=kb_msg)
+                            except Exception as e_hr:
+                                print(f"[Scheduler] Aviso preparando propuesta RRHH: {e_hr}")
+                            finally:
+                                ResourceGovernor.run_full_cleanup(profile_dir=BROWSER_PROFILE_DIR)
+
+                # 3. Búsqueda y propuesta diaria automática de Vacantes Solicitud Sencilla + CV adaptado (L-V a partir de las 09:40 AM)
+                if is_workday and (now.hour > 9 or (now.hour == 9 and now.minute >= 40)):
+                    if sched_state.get("apply_proposed_date") != today_iso:
+                        sched_state["apply_proposed_date"] = today_iso
+                        DAILY_SCHEDULER_STATE_FILE.write_text(json.dumps(sched_state, indent=2), encoding="utf-8")
+                        print(f"[Scheduler] Buscando vacantes de Solicitud Sencilla con CV adaptado ({today_iso})...")
+                        try:
+                            jobs = EasyApplyEngine.scan_easy_apply_jobs(max_results=5)
+                            if jobs:
+                                global _pending_easy_apply_jobs
+                                _pending_easy_apply_jobs = jobs
+                                text_apply, kb_apply = EasyApplyEngine._build_telegram_message_and_keyboard(jobs)
+                                cls._send(text_apply, reply_markup=kb_apply)
+                        except Exception as e_app:
+                            print(f"[Scheduler] Aviso buscando vacantes Easy Apply: {e_app}")
+                        finally:
+                            ResourceGovernor.run_full_cleanup(profile_dir=BROWSER_PROFILE_DIR)
+
+                # 4. Publicación automática de borradores programados para las 10:00 AM (confirmados previamente)
                 for d_id, d_obj in list(drafts.items()):
                     if d_obj.get("status") == "scheduled" and d_obj.get("scheduled_for"):
                         sched_str = d_obj["scheduled_for"]
@@ -617,18 +1038,7 @@ class TelegramBot:
                             print(f"[Scheduler] Hora alcanzada para borrador programado {d_id}. Publicando...")
                             d_obj["status"] = "publishing"
                             _save_drafts(drafts)
-                            TelegramReviewer.publish_approved_draft(d_id)
-
-                            # Ejecutar también las 5 conexiones diarias con RRHH si aún no se han enviado hoy
-                            eng_today = AntiBanValidator.get_today_engagement_summary()
-                            if eng_today.get("connection", 0) == 0:
-                                print("[Scheduler] Ejecutando las 5 solicitudes de conexión diarias tras la publicación...")
-                                actions = EngagementEngine.propose_actions(max_actions=MAX_DAILY_CONNECTIONS, discover_profiles=False)
-                                if actions:
-                                    results = EngagementEngine._execute_actions(actions)
-                                    EngagementEngine._report_results(results, int(TELEGRAM_CHAT_ID))
-                            
-                            # Liberar inmediatamente recursos tras publicar
+                            TelegramReviewer.publish_approved_draft(d_id, from_scheduler=True)
                             ResourceGovernor.run_full_cleanup(profile_dir=BROWSER_PROFILE_DIR)
             except Exception as e:
                 print(f"[Scheduler] Aviso en bucle de cola: {e}")
@@ -661,13 +1071,14 @@ class TelegramBot:
 
         while True:
             try:
+                cls._update_heartbeat()
                 r = http.get(
                     f"{cls.BASE_URL}/getUpdates",
-                    params={"offset": last_update_id + 1, "timeout": 30},
-                    timeout=35
+                    params={"offset": last_update_id + 1, "timeout": 10},
+                    timeout=15
                 )
                 if r.status_code != 200:
-                    time.sleep(2)
+                    time.sleep(4)
                     continue
 
                 for update in r.json().get("result", []):
@@ -676,7 +1087,8 @@ class TelegramBot:
                     # Seguridad: solo responder a nuestro chat
                     update_chat = str(
                         update.get("message", {}).get("chat", {}).get("id", "") or
-                        update.get("callback_query", {}).get("message", {}).get("chat", {}).get("id", "")
+                        update.get("callback_query", {}).get("message", {}).get("chat", {}).get("id", "") or
+                        update.get("callback_query", {}).get("from", {}).get("id", "")
                     )
                     if update_chat != allowed_chat:
                         continue
@@ -725,8 +1137,10 @@ class TelegramBot:
                     ts = datetime.now().strftime("%H:%M:%S")
                     print(f"[{ts}] Comando: {cmd} {arg}")
 
-                    if cmd == "/start":
+                    if cmd in ("/start", "/menu"):
                         cls.cmd_start()
+                    elif cmd == "/guia":
+                        cls.cmd_guia()
                     elif cmd == "/help":
                         cls.cmd_help()
                     elif cmd == "/status":
@@ -745,34 +1159,39 @@ class TelegramBot:
                         cls.cmd_limits()
                     elif cmd == "/drafts":
                         cls.cmd_drafts()
+                    elif cmd in ("/clear", "/cleardrafts"):
+                        cls.cmd_clear_drafts()
                     elif cmd == "/history":
                         cls.cmd_history()
                     elif cmd == "/health":
                         cls.cmd_health()
                     else:
-                        cls._send(f"Comando no reconocido: `{cmd}`\nUsa /help para ver los disponibles.")
+                        cls._send(f"Comando no reconocido: `{cmd}`\nUsa /help o /menu para ver los botones.")
 
             except KeyboardInterrupt:
                 print("\n[Bot] Detenido por el usuario.")
                 break
             except Exception as e:
-                print(f"[Bot] Error en loop principal: {e}")
+                err_str = str(e)
+                if "Read timed out" not in err_str and "Connection reset by peer" not in err_str:
+                    print(f"[Bot] Error en loop principal: {e}")
                 time.sleep(3)
 
     @classmethod
     def _register_commands(cls):
         """Registra los comandos en el menu de Telegram (el boton / del chat)."""
         commands = [
+            {"command": "menu", "description": "Panel principal con botones rapidos"},
+            {"command": "guia", "description": "Guia paso a paso (publicar y limpiar)"},
+            {"command": "publish", "description": "Generar nuevo borrador para LinkedIn"},
+            {"command": "drafts", "description": "Gestionar, publicar o borrar borradores"},
+            {"command": "clear", "description": "Limpiar borradores antiguos o descartados"},
+            {"command": "engage", "description": "Proponer 5 contactos Sevilla (2o grado)"},
+            {"command": "apply", "description": "Vacantes Solicitud Sencilla + CV adaptado"},
             {"command": "status", "description": "Dashboard de actividad del dia"},
-            {"command": "scan", "description": "Escanear ofertas en LinkedIn Jobs"},
-            {"command": "summary", "description": "Resumen ofertas + ranking skills"},
-            {"command": "publish", "description": "Generar borrador de post para LinkedIn"},
-            {"command": "engage", "description": "Proponer plan de engagement (5 conexiones)"},
-            {"command": "apply", "description": "Vacantes Solicitud Sencilla con CV adaptado"},
-            {"command": "history", "description": "Historial de posts, contactos y candidaturas"},
-            {"command": "limits", "description": "Ver limites anti-ban restantes"},
-            {"command": "drafts", "description": "Ver borradores pendientes"},
             {"command": "health", "description": "Verificar sesion de LinkedIn"},
+            {"command": "history", "description": "Historial de posts, contactos y vacantes"},
+            {"command": "limits", "description": "Ver limites anti-ban restantes"},
             {"command": "help", "description": "Lista de comandos"},
         ]
         try:

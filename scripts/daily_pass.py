@@ -70,7 +70,7 @@ def mark_run_today(summary: dict):
     except Exception as e:
         print(f"[DailyPass] Error guardando registro de ejecución: {e}")
 
-def run_daily_pass(force: bool = False):
+def run_daily_pass(force: bool = False, dry_run: bool = False):
     today_str = date.today().isoformat()
     now_time = datetime.now().strftime("%H:%M")
 
@@ -78,15 +78,20 @@ def run_daily_pass(force: bool = False):
         print(f"[{now_time}] [DailyPass] Ya se ha ejecutado hoy ({today_str}). Nada pendiente.")
         return
 
+    dry_tag = " [DRY-RUN]" if dry_run else ""
     print(f"\n=======================================================")
-    print(f"🚀 INICIANDO PASE DIARIO JOBSEEKERGA ({today_str} {now_time})")
+    print(f"INICIANDO PASE DIARIO JOBSEEKERGA ({today_str} {now_time}){dry_tag}")
     print(f"=======================================================")
 
-    notify_telegram(
-        f"🚀 *JobSeekerGA: Pase diario iniciado*\n"
-        f"📅 Fecha: `{today_str}` | Hora: `{now_time}`\n"
-        f"Buscando ofertas Junior en Sevilla y conectando con RRHH..."
-    )
+    if dry_run:
+        print("[DRY-RUN] Modo simulación: no se ejecutarán acciones reales en LinkedIn ni se esperará aprobación en Telegram.")
+
+    if not dry_run:
+        notify_telegram(
+            f"*JobSeekerGA: Pase diario iniciado*\n"
+            f"Fecha: `{today_str}` | Hora: `{now_time}`\n"
+            f"Buscando ofertas Junior en Sevilla y conectando con RRHH..."
+        )
 
     summary = {
         "date": today_str,
@@ -98,49 +103,62 @@ def run_daily_pass(force: bool = False):
     }
 
     # 1. Escaneo de ofertas Junior / Prácticas en Sevilla
-    try:
-        print("\n[1/3] 📡 Escaneando ofertas en Sevilla...")
-        jobs = JobScanner.scan()
-        summary["jobs_found"] = len(jobs)
-        print(f"[✓] {len(jobs)} ofertas encontradas.")
-    except Exception as e:
-        print(f"[!] Error en escaneo de ofertas: {e}")
+    if dry_run:
+        print("\n[1/3] [DRY-RUN] Scan de ofertas omitido (no se abre navegador).")
+        summary["jobs_found"] = 0
+    else:
+        try:
+            print("\n[1/3] Escaneando ofertas en Sevilla...")
+            jobs = JobScanner.scan()
+            summary["jobs_found"] = len(jobs)
+            print(f"[✓] {len(jobs)} ofertas encontradas.")
+        except Exception as e:
+            print(f"[!] Error en escaneo de ofertas: {e}")
 
     # 2. Conexiones con RRHH / Recruiter de empresas target
-    try:
-        print("\n[2/3] 🤝 Conectando con responsables de RRHH de las empresas...")
-        actions = EngagementEngine.propose_actions(max_actions=MAX_DAILY_CONNECTIONS)
-        conn_actions = [a for a in actions if a.get("type") == "connection"]
+    if dry_run:
+        print("\n[2/3] [DRY-RUN] Conexiones con RRHH omitidas.")
+    else:
+        try:
+            print("\n[2/3] Conectando con responsables de RRHH de las empresas...")
+            actions = EngagementEngine.propose_actions(max_actions=MAX_DAILY_CONNECTIONS)
+            conn_actions = [a for a in actions if a.get("type") == "connection"]
 
-        if conn_actions:
-            print(f"[*] Ejecutando {len(conn_actions)} solicitudes de conexión...")
-            results = EngagementEngine._execute_actions(conn_actions)
-            for r in results:
-                target_str = f"{r.get('target_name', 'Recruiter')} ({r.get('target_company')})"
-                status = r.get("status")
-                summary["connection_targets"].append({"target": target_str, "status": status})
-                if status == "success":
-                    summary["connections_sent"] += 1
-            print(f"[✓] {summary['connections_sent']} conexiones enviadas con éxito.")
-        else:
-            print("[*] No hay cupo de conexiones hoy (límite anti-ban protegido).")
-    except Exception as e:
-        print(f"[!] Error en conexiones con RRHH: {e}")
+            if conn_actions:
+                print(f"[*] Ejecutando {len(conn_actions)} solicitudes de conexión...")
+                results = EngagementEngine._execute_actions(conn_actions)
+                for r in results:
+                    target_str = f"{r.get('target_name', 'Recruiter')} ({r.get('target_company')})"
+                    status = r.get("status")
+                    summary["connection_targets"].append({"target": target_str, "status": status})
+                    if status == "success":
+                        summary["connections_sent"] += 1
+                print(f"[✓] {summary['connections_sent']} conexiones enviadas con éxito.")
+            else:
+                print("[*] No hay cupo de conexiones hoy (límite anti-ban protegido).")
+        except Exception as e:
+            print(f"[!] Error en conexiones con RRHH: {e}")
 
-    # 3. Preparación del borrador del Diario de Desarrollo (SIEMPRE con confirmación previa en Telegram)
+    # 3. Preparación del borrador del Diario de Desarrollo
+    # En dry-run: genera y muestra el borrador sin enviar a Telegram ni esperar aprobación
     today_records = [
         r for r in AntiBanValidator.get_records()
         if r.get("date", "").startswith(today_str) and r.get("status") == "success"
     ]
     if not today_records and AntiBanValidator.check_daily_limit():
         try:
-            print("\n[3/3] 📓 Generando borrador del Diario de Desarrollo y enviándolo a Telegram para tu aprobación...")
-            diary_record = DevDiaryGenerator.prepare_daily_diary_draft(wait_approval=True)
+            if dry_run:
+                print("\n[3/3] [DRY-RUN] Generando borrador del Diario de Desarrollo (sin enviar a Telegram)...")
+            else:
+                print("\n[3/3] Generando borrador del Diario de Desarrollo y enviandolo a Telegram para tu aprobacion...")
+            diary_record = DevDiaryGenerator.prepare_daily_diary_draft(wait_approval=not dry_run)
             if diary_record:
                 summary["post_published"] = (
-                    f"{diary_record['display_name']} [{diary_record.get('status', 'pendiente de confirmación')}]"
+                    f"{diary_record['display_name']} [{diary_record.get('status', 'borrador generado')}]"
                 )
                 print(f"[✓] Borrador gestionado: {summary['post_published']}")
+                if dry_run:
+                    print(f"\n--- PREVIEW DEL POST ---\n{diary_record.get('post_preview', '')}\n--- FIN PREVIEW ---")
         except Exception as e:
             print(f"[!] Error preparando Diario de Desarrollo: {e}")
     else:
@@ -179,9 +197,13 @@ def run_daily_pass(force: bool = False):
 
     final_msg += f"\n💤 *Bot finalizado por hoy. Todos los procesos liberados.*"
 
-    notify_telegram(final_msg)
-    print("\n[✓] Pase diario completado con éxito. Reporte enviado a Telegram @JobGaBot.\n")
+    if not dry_run:
+        notify_telegram(final_msg)
+        print("\n[✓] Pase diario completado con exito. Reporte enviado a Telegram @JobGaBot.\n")
+    else:
+        print("\n[DRY-RUN] Pase diario simulado completado. No se envio nada a Telegram ni LinkedIn.\n")
 
 if __name__ == "__main__":
     force_run = "--force" in sys.argv
-    run_daily_pass(force=force_run)
+    dry_run_flag = "--dry-run" in sys.argv
+    run_daily_pass(force=force_run, dry_run=dry_run_flag)

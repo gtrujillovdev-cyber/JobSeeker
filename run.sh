@@ -3,7 +3,7 @@
 # Runner de ejecución para JobSeekerGA en macOS
 # ========================================================
 
-PROJECT_DIR="/Users/gabrieltrujillovallejo/Documents/GtrujilloMacDoc/GitHub/GitGa/Developer/Projects/JobSeekerGA"
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_PYTHON="$PROJECT_DIR/.venv/bin/python"
 
 cd "$PROJECT_DIR" || exit 1

@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/gabrieltrujillovallejo/Documents/GtrujilloMacDoc/GitHub/GitGa/Developer/Projects/JobSeekerGA/run.sh</string>
+        <string>/Users/gabrieltrujillovallejo/projects/AI/JobSeekerGA/run.sh</string>
     </array>
     <!-- Ejecutar de Martes a Jueves a las 09:30 AM (Horario de mayor engagement en LinkedIn) -->
     <key>StartCalendarInterval</key>
@@ -38,8 +38,8 @@
         </dict>
     </array>
     <key>StandardOutPath</key>
-    <string>/Users/gabrieltrujillovallejo/Documents/GtrujilloMacDoc/GitHub/GitGa/Developer/Projects/JobSeekerGA/logs/launchd.log</string>
+    <string>/Users/gabrieltrujillovallejo/projects/AI/JobSeekerGA/logs/launchd.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/gabrieltrujillovallejo/Documents/GtrujilloMacDoc/GitHub/GitGa/Developer/Projects/JobSeekerGA/logs/launchd_err.log</string>
+    <string>/Users/gabrieltrujillovallejo/projects/AI/JobSeekerGA/logs/launchd_err.log</string>
 </dict>
 </plist>

@@ -115,20 +115,33 @@ class TestGenerateComment:
 class TestGenerateConnectionNote:
 
     @patch("src.engagement_engine.GEMINI_API_KEY", "")
-    def test_fallback_note_includes_name(self):
+    def test_fallback_note_includes_first_name(self):
         note = EngagementEngine._generate_connection_note("Acme", "Maria Lopez")
-        assert "Maria Lopez" in note
+        assert "Hola Maria," in note
+        assert "soy Gabriel" in note
+        assert "DAM" in note
 
     @patch("src.engagement_engine.GEMINI_API_KEY", "")
-    def test_fallback_note_includes_company(self):
+    def test_fallback_note_excludes_company_and_mentions_first_opportunity(self):
         note = EngagementEngine._generate_connection_note("Acme Corp", "Juan")
-        assert "Acme Corp" in note
+        assert "Acme Corp" not in note
+        assert "primera oportunidad" in note.lower()
 
     @patch("src.engagement_engine.GEMINI_API_KEY", "")
     def test_fallback_note_length(self):
-        """La nota no debe exceder el limite de LinkedIn (300 chars)."""
+        """La nota no debe exceder el limite gratuito de LinkedIn (200 chars)."""
         note = EngagementEngine._generate_connection_note("Empresa Larga SA", "Nombre Largo")
-        assert len(note) <= 300
+        assert len(note) <= 195
+
+    @patch("src.engagement_engine.GEMINI_API_KEY", "")
+    def test_fallback_note_uses_unified_template_for_all_profiles(self):
+        note = EngagementEngine._generate_connection_note(
+            "Acme Tech", "Carlos Ruiz", target_role="Tech Lead Python & Backend"
+        )
+        assert "Hola Carlos," in note
+        assert "Acme Tech" not in note
+        assert len(note) <= 195
+        assert "primera oportunidad" in note.lower()
 
 
 class TestReportResults:

@@ -21,14 +21,17 @@ class LinkedInPublisher:
         self.dry_run = dry_run
         self.last_published_url: Optional[str] = None
         self.last_confirmation_screenshot: Optional[Path] = None
+        self.last_error: Optional[str] = None
 
     def publish_post(
         self,
         text: str,
         image_path: Optional[Union[Path, List[Path]]] = None,
         project_name: str = "General",
-        first_comment: Optional[str] = None
+        first_comment: Optional[str] = None,
+        pill_id: Optional[str] = None
     ) -> bool:
+        self.last_error = None
         print(f"\n💼 [LinkedIn] Iniciando proceso de publicación para '{project_name}'...")
 
         # Normalizar lista de imágenes reales
@@ -38,12 +41,21 @@ class LinkedInPublisher:
         elif image_path and Path(image_path).exists():
             image_paths = [Path(image_path)]
 
-        # 1. Validación Anti-Ban
+        # 1. Validación Anti-Ban (límite diario) y Bloqueo Estricto Anti-Duplicados
         if not AntiBanValidator.check_daily_limit():
+            self.last_error = "Límite diario de publicaciones alcanzado."
             return False
 
-        if not BROWSER_PROFILE_DIR.exists():
-            print(f"[!] No se encontró el perfil de navegador en {BROWSER_PROFILE_DIR}")
+        if not self.dry_run:
+            is_dup, dup_reason = AntiBanValidator.is_duplicate_publication(text, pill_id=pill_id)
+            if is_dup:
+                self.last_error = f"Publicación duplicada bloqueada: {dup_reason}"
+                print(f"[Anti-Duplicados] [⛔] {self.last_error}")
+                return False
+
+        from src.browser_helper import has_linkedin_session
+        if not has_linkedin_session():
+            print(f"[!] No se encontró sesión o perfil de navegador en {BROWSER_PROFILE_DIR}")
             print("👉 Ejecuta primero: python scripts/setup_linkedin_session.py")
             return False
 
@@ -57,13 +69,13 @@ class LinkedInPublisher:
                 print(f"[*] Imágenes adjuntas simuladas ({len(image_paths)}): {[str(p) for p in image_paths]}")
             if first_comment:
                 print(f"[*] Primer comentario simulado: {first_comment}")
-            AntiBanValidator.record_publication(project_name, text, str(image_paths[0] if image_paths else ""), status="simulated")
+            AntiBanValidator.record_publication(project_name, text, str(image_paths[0] if image_paths else ""), status="simulated", pill_id=pill_id)
             return True
 
         # 3. Publicación real mediante Playwright
         try:
             from playwright.sync_api import sync_playwright
-            from src.browser_helper import get_playwright_browser_context
+            from src.browser_helper import get_playwright_browser_context, close_playwright_context
 
             print(f"[*] Abriendo contexto de navegación de LinkedIn (headless={HEADLESS})...")
             with sync_playwright() as p:
@@ -77,9 +89,7 @@ class LinkedInPublisher:
                 if "login" in page.url.lower() or "authwall" in page.url.lower():
                     print(f"[!] La sesión de LinkedIn ha expirado o requiere autenticación (URL: {page.url}).")
                     print("👉 Ejecuta: python scripts/setup_linkedin_session.py para renovarla.")
-                    context.close()
-                    if browser_instance:
-                        browser_instance.close()
+                    close_playwright_context(context, browser_instance, persist=False)
                     return False
 
                 print("[*] Localizando el disparador de publicación...")
@@ -106,7 +116,7 @@ class LinkedInPublisher:
 
                 if not opened:
                     print("[!] No se encontró el botón para crear publicación en el feed.")
-                    context.close()
+                    close_playwright_context(context, browser_instance, persist=True)
                     return False
 
                 time.sleep(2.5)
@@ -177,7 +187,7 @@ class LinkedInPublisher:
 
                 if not editor_el:
                     print("[!] No se encontró el editor de texto de la publicación.")
-                    context.close()
+                    close_playwright_context(context, browser_instance, persist=True)
                     return False
 
                 try:
@@ -205,12 +215,21 @@ class LinkedInPublisher:
                 publish_btn = page.locator("button.share-actions__primary-action, button:has-text('Publicar'), button:has-text('Post')").first
                 if publish_btn.count() > 0 and publish_btn.is_enabled():
                     try:
-                        publish_btn.evaluate("el => el.click()")
+                        publish_btn.click(timeout=5000)
                     except Exception:
-                        publish_btn.click(force=True)
-                    time.sleep(6)  # Esperar a que la petición de red termine
+                        try:
+                            publish_btn.evaluate("el => el.click()")
+                        except Exception:
+                            publish_btn.click(force=True)
+                    time.sleep(8)  # Esperar a que la subida de imágenes y petición de red terminen
                     print("[✓] ¡Publicación lanzada exitosamente a tu feed de LinkedIn!")
-                    AntiBanValidator.record_publication(project_name, text, str(image_paths[0] if image_paths else ""), status="success")
+                    AntiBanValidator.record_publication(
+                        project_name,
+                        text,
+                        str(image_paths[0] if image_paths else ""),
+                        status="success",
+                        pill_id=pill_id
+                    )
 
                     # Intentar capturar URN desde el toast inmediato si aparece ("Ver publicación")
                     toast_urn = ""
@@ -238,11 +257,11 @@ class LinkedInPublisher:
                     self.last_published_url = info.get("post_url")
                     self.last_confirmation_screenshot = info.get("screenshot_path")
 
-                    context.close()
+                    close_playwright_context(context, browser_instance, persist=True)
                     return True
                 else:
                     print("[!] El botón de 'Publicar' no está habilitado o no se encontró.")
-                    context.close()
+                    close_playwright_context(context, browser_instance, persist=True)
                     return False
 
         except Exception as e:
@@ -272,9 +291,9 @@ class LinkedInPublisher:
         }
         try:
             detected_urn = hint_urn
-            for attempt in range(3):
+            for attempt in range(6):
                 page.goto("https://www.linkedin.com/in/me/recent-activity/all/", wait_until="domcontentloaded", timeout=30000)
-                time.sleep(4)
+                time.sleep(4.5)
 
                 body_text = ""
                 try:
@@ -300,12 +319,12 @@ class LinkedInPublisher:
                     return out;
                 }""")
 
-                if urns:
+                # SOLO asignar el URN si el texto de la nueva publicación ya aparece en actividad reciente
+                if urns and (not expected_snippet or expected_snippet.lower() in body_text.lower()):
                     detected_urn = urns[0]
                     result["post_url"] = f"https://www.linkedin.com/feed/update/{detected_urn}/"
-                    if not expected_snippet or expected_snippet.lower() in body_text.lower():
-                        result["verified"] = True
-                        break
+                    result["verified"] = True
+                    break
 
                 # Fallback clásico si existen tarjetas .feed-shared-update-v2
                 post_cards = page.locator("div.feed-shared-update-v2, [data-urn*='urn:li:activity:']")
@@ -319,21 +338,21 @@ class LinkedInPublisher:
                             result["post_url"] = f"https://www.linkedin.com/feed/update/{urn}/"
                         break
 
-                print(f"[LinkedIn] Esperando indexación del nuevo post en actividad reciente (intento {attempt + 1}/3)...")
-                time.sleep(3)
+                print(f"[LinkedIn] Esperando indexación del nuevo post en actividad reciente (intento {attempt + 1}/6)...")
+                time.sleep(4)
 
-            # Si tenemos URL directa de la publicación, abrirla directamente para verificar, comentar y capturar
-            if result["post_url"]:
+            # Si tenemos URL directa de la publicación verificada, abrirla directamente para comentar y capturar
+            if result["verified"] and result["post_url"]:
                 page.goto(result["post_url"], wait_until="domcontentloaded", timeout=30000)
                 time.sleep(3.5)
                 try:
                     post_page_text = page.locator("body").inner_text()
-                    if not expected_snippet or expected_snippet.lower() in post_page_text.lower():
-                        result["verified"] = True
+                    if expected_snippet and expected_snippet.lower() not in post_page_text.lower():
+                        result["verified"] = False
                 except Exception:
-                    result["verified"] = True
+                    pass
 
-            if comment_text and (result["verified"] or result["post_url"]):
+            if comment_text and result["verified"]:
                 print(f"[*] Publicando primer comentario automático en el post verificado: {comment_text[:70]}...")
                 comment_box_selectors = (
                     "div[aria-label*='Editor de texto para crear comentarios'], "
@@ -400,8 +419,11 @@ class LinkedInPublisher:
 
             # Captura de confirmación del post publicado (+ primer comentario)
             confirm_path = SCREENSHOTS_DIR / f"published_confirm_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
-            page.screenshot(path=str(confirm_path), full_page=False)
-            result["screenshot_path"] = confirm_path
+            try:
+                page.screenshot(path=str(confirm_path), full_page=False, timeout=5000, animations="disabled")
+                result["screenshot_path"] = confirm_path
+            except Exception as e_shot:
+                print(f"[LinkedIn] Aviso capturando pantalla de confirmación: {e_shot}")
         except Exception as e:
             print(f"[LinkedIn] Aviso en verificación/primer comentario: {e}")
         return result
@@ -412,21 +434,21 @@ class LinkedInPublisher:
         Comprueba de forma silenciosa si la sesión persistente de LinkedIn sigue activa.
         Ideal para healthcheck diario en el MBP1 o servidor headless.
         """
-        if not BROWSER_PROFILE_DIR.exists():
-            return {"ok": False, "reason": "No existe el directorio de perfil de navegador."}
+        from src.browser_helper import has_linkedin_session
+        if not has_linkedin_session():
+            return {"ok": False, "reason": "No existe perfil ni storage_state de navegador."}
         try:
             from playwright.sync_api import sync_playwright
-            from src.browser_helper import get_playwright_browser_context
+            from src.browser_helper import get_playwright_browser_context, close_playwright_context
             with sync_playwright() as p:
                 context, browser_instance = get_playwright_browser_context(p)
                 page = context.pages[0] if context.pages else context.new_page()
                 page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=30000)
                 time.sleep(2)
                 url = page.url.lower()
-                context.close()
-                if browser_instance:
-                    browser_instance.close()
-                if "login" in url or "authwall" in url or "checkpoint" in url:
+                is_expired = "login" in url or "authwall" in url or "checkpoint" in url
+                close_playwright_context(context, browser_instance, persist=not is_expired)
+                if is_expired:
                     return {"ok": False, "reason": f"Sesión expirada o requiere login ({url})."}
                 return {"ok": True, "reason": "Sesión de LinkedIn activa y saludable."}
         except Exception as e:

@@ -6,12 +6,12 @@
     <string>com.jobseekerga.bot</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/gabrieltrujillovallejo/Documents/GtrujilloMacDoc/GitHub/GitGa/Developer/Projects/JobSeekerGA/.venv/bin/python</string>
-        <string>/Users/gabrieltrujillovallejo/Documents/GtrujilloMacDoc/GitHub/GitGa/Developer/Projects/JobSeekerGA/main.py</string>
+        <string>/Users/gabrieltrujillovallejo/projects/AI/JobSeekerGA/.venv/bin/python</string>
+        <string>/Users/gabrieltrujillovallejo/projects/AI/JobSeekerGA/main.py</string>
         <string>--bot</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/gabrieltrujillovallejo/Documents/GtrujilloMacDoc/GitHub/GitGa/Developer/Projects/JobSeekerGA</string>
+    <string>/Users/gabrieltrujillovallejo/projects/AI/JobSeekerGA</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
@@ -20,9 +20,9 @@
         <false/>
     </dict>
     <key>StandardOutPath</key>
-    <string>/Users/gabrieltrujillovallejo/Documents/GtrujilloMacDoc/GitHub/GitGa/Developer/Projects/JobSeekerGA/logs/bot_stdout.log</string>
+    <string>/Users/gabrieltrujillovallejo/projects/AI/JobSeekerGA/logs/bot_stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/gabrieltrujillovallejo/Documents/GtrujilloMacDoc/GitHub/GitGa/Developer/Projects/JobSeekerGA/logs/bot_stderr.log</string>
+    <string>/Users/gabrieltrujillovallejo/projects/AI/JobSeekerGA/logs/bot_stderr.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>

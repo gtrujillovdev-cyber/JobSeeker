@@ -38,9 +38,37 @@ def main():
     parser.add_argument("--history", action="store_true", help="Muestra el historial completo de posts, contactos y candidaturas")
     parser.add_argument("--dev-diary", action="store_true", help="Publica la entrada de hoy del Diario de Desarrollo con Gemini")
     parser.add_argument("--publish-draft", type=str, default=None, help="Publica directamente un borrador aprobado por su draft_id")
+    parser.add_argument("--publish-scheduled", action="store_true", help="Publica todos los borradores programados cuya hora haya llegado")
+    parser.add_argument("--pipeline", action="store_true", help="Ejecuta el pase diario completo (escaneo, conexiones RRHH y borrador Diario)")
     parser.add_argument("--name", type=str, default="GaTDSEQ", help="Nombre del proyecto a promocionar")
 
     args = parser.parse_args()
+
+    if args.publish_scheduled:
+        from datetime import datetime
+        from src.telegram_reviewer import _get_drafts
+        drafts = _get_drafts()
+        now = datetime.now()
+        published_any = False
+        for d_id, d_obj in list(drafts.items()):
+            if d_obj.get("status") == "scheduled":
+                sched_str = d_obj.get("scheduled_for", "")
+                try:
+                    sched_dt = datetime.fromisoformat(sched_str).replace(tzinfo=None)
+                except Exception:
+                    sched_dt = now
+                if now >= sched_dt:
+                    print(f"[*] Publicando borrador programado {d_id}...")
+                    if TelegramReviewer.publish_approved_draft(d_id):
+                        published_any = True
+        if not published_any:
+            print("[*] No había borradores programados pendientes de publicar en este momento.")
+        return
+
+    if args.pipeline:
+        from scripts.daily_pass import run_daily_pass
+        run_daily_pass(force=True, dry_run=args.dry_run)
+        return
 
     if args.history:
         from src.easy_apply import EasyApplyEngine
@@ -262,26 +290,15 @@ def validate_execution_liquidity(order_book, target_volume):
             print("\n[!] No se pudo preparar el borrador del Diario de Desarrollo.")
         return
 
-    # Ejecución normal del pipeline
-    review_mode = not args.direct
-    pipeline = JobSeekerPipeline(dry_run=args.dry_run, review_mode=review_mode)
-
-    pipeline.run_post(
-        project_name=args.name,
-        headline_title=f"Optimización de Rendimiento y Gestión de Estados en {args.name}",
-        problem_context="Al mantener procesos en segundo plano de manera continua en sistemas macOS, la fragmentación de memoria y el estancamiento de hilos de ejecución representan el mayor riesgo de degradación del servicio.",
-        implementation_details="Se desacopló el ciclo de ejecución en workers aislados con recolección periódica explícita y gestión estricta de descriptores de socket y contextos de navegador.",
-        technical_findings="El perfilado con métricas de sistema evidenció que la retención de referencias en estructuras asíncronas no cerradas generaba un incremento sostenido de huella RSS superior a 350 MB en ciclos de 12 horas.",
-        objectives_achieved=[
-            "Estabilidad Operativa 24/7: Huella de memoria constante sin crecimiento residual.",
-            "Aislamiento de Fallos: Recuperación automática ante desconexiones transitorias sin intervención humana.",
-            "Eficiencia de Recursos: Reducción del uso de CPU en estado inactivo por debajo del 1.5%."
-        ],
-        tech_stack=["Python", "SystemArchitecture", "macOS", "Performance"],
-        code_snippet="""# Aislamiento de workers y gestión de contexto persistente
-async with task_supervisor() as supervisor:
-    await supervisor.dispatch_isolated_process(pipeline_task)"""
-    )
+    # Sin flag específico: redirigir al flujo del Diario de Desarrollo
+    print("[*] No se ha especificado ningún modo de acción.")
+    print("[*] Redirigiendo al flujo de Diario de Desarrollo (equivalente a --dev-diary).")
+    print("[*] Para el pase diario completo usa: python main.py --pipeline")
+    record = DevDiaryGenerator.prepare_daily_diary_draft(wait_approval=not args.dry_run)
+    if record:
+        print(f"\n[✓] Borrador #{record['entry_number']} enviado a Telegram: {record['display_name']}")
+    else:
+        print("\n[!] No se pudo preparar el borrador. Comprueba pending_drafts.json o ejecuta --pipeline.")
 
 if __name__ == "__main__":
     main()

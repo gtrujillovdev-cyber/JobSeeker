@@ -45,12 +45,12 @@ _NON_IT_EXCLUSIONS = [
 
 # Palabras clave que confirman que una oferta encaja con el perfil técnico de Gabriel
 _IT_RELEVANCE_KEYWORDS = [
-    "ciberseguridad", "cybersecurity", "security", "infosec", "soc", "pentest",
-    "python", "linux", "sistemas", "systems", "devops", "cloud", "docker",
-    "software", "desarrollador", "developer", "programador", "backend", "full stack",
-    "full-stack", "automatización", "automation", "ia", "ai", "data", "qa", "testing",
-    "infraestructura", "redes", "it", "dam", "daw", "asir", "informática", "support",
-    "helpdesk", "microinformática", "sdet", "api", "fastapi", "dev", "sre"
+    "programador", "programación", "programacion", "desarrollador", "developer", "software",
+    "python", "backend", "full stack", "full-stack", "api", "fastapi", "sql", "git", "java",
+    "typescript", "javascript", "qa", "testing", "sdet", "automatización", "automation",
+    "linux", "sistemas", "systems", "devops", "cloud", "docker", "infraestructura", "redes",
+    "ciberseguridad", "cybersecurity", "security", "infosec", "soc", "it", "dam", "daw",
+    "asir", "informática", "support", "helpdesk", "ia", "ai", "data", "dev", "sre"
 ]
 
 
@@ -106,7 +106,8 @@ class JobScanner:
             print("[JobScanner] No hay keywords configuradas. Revisa JOB_SEARCH_KEYWORDS en .env")
             return []
 
-        if not BROWSER_PROFILE_DIR.exists():
+        from src.browser_helper import has_linkedin_session
+        if not has_linkedin_session():
             print("[JobScanner] No hay sesion de LinkedIn. Ejecuta: python scripts/setup_linkedin_session.py")
             return []
 
@@ -115,10 +116,10 @@ class JobScanner:
 
         try:
             from playwright.sync_api import sync_playwright
-            from src.browser_helper import get_playwright_browser_context
+            from src.browser_helper import get_playwright_browser_context, close_playwright_context
 
             with sync_playwright() as p:
-                browser, context = get_playwright_browser_context(p)
+                context, browser = get_playwright_browser_context(p)
                 page = context.pages[0] if context.pages else context.new_page()
 
                 # Construir URL de busqueda de LinkedIn Jobs
@@ -137,7 +138,7 @@ class JobScanner:
                 # Verificar que no pide login
                 if "login" in page.url.lower() or "authwall" in page.url.lower():
                     print("[JobScanner] Sesion expirada. Ejecuta: python scripts/setup_linkedin_session.py")
-                    context.close()
+                    close_playwright_context(context, browser, persist=False)
                     return []
 
                 # Scroll progresivo para cargar mas tarjetas (LinkedIn usa lazy loading)
@@ -270,7 +271,7 @@ class JobScanner:
                     except Exception:
                         continue
 
-                context.close()
+                close_playwright_context(context, browser, persist=True)
 
             # Guardar resultados
             all_results = cls._load_results()

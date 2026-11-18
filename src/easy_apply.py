@@ -301,7 +301,8 @@ class EasyApplyEngine:
         Busca ofertas activas en LinkedIn con filtro 'Solicitud sencilla' (&f_AL=true),
         extrae su descripción y stack, y selecciona/genera el CV más adaptado para cada una.
         """
-        if not BROWSER_PROFILE_DIR.exists():
+        from src.browser_helper import has_linkedin_session
+        if not has_linkedin_session():
             print("[EasyApply] No hay sesión de LinkedIn configurada.")
             return []
 
@@ -311,20 +312,27 @@ class EasyApplyEngine:
             search_plans.append((keywords, location or JOB_SEARCH_LOCATION))
         else:
             search_plans = [
-                ("Python OR QA OR Linux OR Ciberseguridad OR Sistemas OR Junior OR DAM", "Sevilla"),
-                ("Junior Developer OR Python OR QA Automation OR Sistemas Linux OR Ciberseguridad", "España"),
+                ("Desarrollador Junior OR Programador Python OR Software OR Backend OR QA OR Sistemas Linux", "Sevilla"),
+                ("Junior Developer Python OR Programador Junior OR QA Automation OR Sistemas Linux OR DAM", "España"),
             ]
 
         discovered_jobs: List[Dict[str, Any]] = []
         seen_urls = set(already_applied)
+        # Dedup adicional por (empresa, título) normalizado: evita repostular si cambia la URL del mismo puesto
+        seen_job_sigs: set = {
+            f"{r.get('company', '').lower().strip()}|{r.get('title', '').lower().strip()}"
+            for r in cls._load_history()
+            if r.get("status") == "success"
+        }
 
         try:
             from playwright.sync_api import sync_playwright
-            from src.browser_helper import get_playwright_browser_context
+            from src.browser_helper import get_playwright_browser_context, close_playwright_context
 
             with sync_playwright() as p:
-                browser, context = get_playwright_browser_context(p)
+                context, browser = get_playwright_browser_context(p)
                 page = context.pages[0] if context.pages else context.new_page()
+                session_valid = False
 
                 for kw_query, loc_query in search_plans:
                     if len(discovered_jobs) >= max_results:
@@ -339,6 +347,13 @@ class EasyApplyEngine:
                     print(f"[EasyApply] Buscando vacantes de Solicitud Sencilla: '{kw_query}' en '{loc_query}'...")
                     page.goto(search_url, wait_until="domcontentloaded", timeout=30000)
                     time.sleep(3.5)
+
+                    cur_url = page.url.lower()
+                    if "login" in cur_url or "authwall" in cur_url or "checkpoint" in cur_url:
+                        print(f"[EasyApply] [⛔] Sesión expirada o requiere login al buscar vacantes ({page.url}).")
+                        session_valid = False
+                        break
+                    session_valid = True
 
                     # Extraer tarjetas del nuevo DOM SDUI (div[role="button"]) o clásico
                     cards_meta = page.evaluate("""() => {
@@ -395,7 +410,13 @@ class EasyApplyEngine:
                         clean_url = job_url.split("?")[0].rstrip("/")
                         if clean_url in seen_urls:
                             continue
+                        job_sig = f"{company.lower().strip()}|{title.lower().strip()}"
+                        if job_sig in seen_job_sigs:
+                            print(f"[EasyApply] Saltando (ya aplicado empresa+título): {title} @ {company}")
+                            seen_urls.add(clean_url)
+                            continue
                         seen_urls.add(clean_url)
+                        seen_job_sigs.add(job_sig)
 
                         discovered_jobs.append({
                             "title": title,
@@ -486,7 +507,7 @@ class EasyApplyEngine:
                         print(f"  [EasyApply] Aviso verificando {job.get('url')}: {e_job}")
                         continue
 
-                context.close()
+                close_playwright_context(context, browser, persist=session_valid)
                 return verified_jobs
 
         except Exception as e:
@@ -768,9 +789,9 @@ class EasyApplyEngine:
                     job_id = job_id_match.group(1) if job_id_match else str(int(time.time()))
                     shot_path = SCREENSHOTS_DIR / f"easy_apply_{job_id}.png"
                     try:
-                        page.screenshot(path=str(shot_path))
-                    except Exception:
-                        pass
+                        page.screenshot(path=str(shot_path), timeout=5000, animations="disabled")
+                    except Exception as e_shot:
+                        print(f"  [EasyApply] Aviso capturando pantalla: {e_shot}")
 
                     cls.record_application(job, status="success")
                     print(f"  [EasyApply] [✓] Solicitud enviada con éxito a {company} ({title}) usando CV [{job.get('cv_label')}]")
@@ -838,10 +859,10 @@ class EasyApplyEngine:
 
         try:
             from playwright.sync_api import sync_playwright
-            from src.browser_helper import get_playwright_browser_context
+            from src.browser_helper import get_playwright_browser_context, close_playwright_context
 
             with sync_playwright() as p:
-                browser, context = get_playwright_browser_context(p)
+                context, browser = get_playwright_browser_context(p)
                 page = context.pages[0] if context.pages else context.new_page()
 
                 for job in jobs:
@@ -851,7 +872,8 @@ class EasyApplyEngine:
                     results.append(res)
                     time.sleep(random.uniform(3.0, 6.0))
 
-                context.close()
+                any_valid = not any(r.get("reason") == "session_expired" for r in results)
+                close_playwright_context(context, browser, persist=any_valid)
         except Exception as e:
             print(f"[EasyApply] Error en Playwright: {e}")
 

@@ -32,11 +32,11 @@ class CopyGenerator:
                 client = genai.Client(api_key=GEMINI_API_KEY)
 
                 prompt = f"""
-                Eres un ingeniero de software con experiencia real en producción, redactando una publicación para LinkedIn.
-                Tu objetivo NO es solo mostrar tu trabajo, sino GENERAR CONVERSACIÓN e INTERACCIÓN con otros profesionales del sector.
+                Eres un desarrollador de software y sistemas en búsqueda activa de oportunidades IT, redactando una publicación técnica para LinkedIn.
+                Tu objetivo es demostrar solvencia real en programación (y sistemas cuando aplique) y GENERAR CONVERSACIÓN técnica con otros desarrolladores y recruiters IT.
 
                 REGLAS DE ESTILO Y DIRECTRIZ ANTI-APELOTONAMIENTO (NO NEGOCIABLES):
-                - Tono: profesional, directo y cercano. Como explicarle un problema técnico a un compañero senior.
+                - Tono: profesional, directo y cercano. Como explicarle un problema técnico a un compañero senior o tech lead.
                 - PROHIBIDO lenguaje naíf/infantil: 'trasteando', 'una pasada', 'jugando con', 'cositas', 'chulo'.
                 - PROHIBIDO humo corporativo: 'revolucionario', 'encantado de anunciar', 'game-changer', 'orgulloso de compartir'.
                 - PROHIBIDO TEXTO APELOTONADO EN MÓVIL:
@@ -46,9 +46,9 @@ class CopyGenerator:
 
                 ESTRUCTURA OBLIGATORIA (optimizada para el algoritmo de LinkedIn):
 
-                1. HOOK (primera línea): Una frase impactante, un dato concreto o una pregunta provocadora.
+                1. HOOK (primera línea): Una frase impactante, un dato concreto o una pregunta técnica.
                    Esto es lo que se ve ANTES del "ver más". Si no engancha aquí, nadie lee el resto.
-                   Ejemplos buenos: "El 38% de nuestros drawdowns no eran fallos del modelo." / "Descubrimos que el problema no estaba en el código, sino en el libro de órdenes."
+                   Ejemplos buenos: "Una búsqueda con 'in' nos daba falsos positivos entre Java y JavaScript." / "Separar el recolector del servidor REST evitó bloqueos en disco."
 
                 2. CONTEXTO DEL PROBLEMA (2-3 líneas): Qué problema real encontraste en producción. Sin preámbulos.
 

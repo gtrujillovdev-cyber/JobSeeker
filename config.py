@@ -48,10 +48,10 @@ if os.getenv("PLAYWRIGHT_NODEJS_PATH"):
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
-# Job Scanner - Radar filtrado por Sevilla (España) y roles Junior / Prácticas / Becario IT
+# Job Scanner - Radar filtrado por Sevilla (España) enfocado en Programación y Sistemas
 JOB_SEARCH_KEYWORDS = os.getenv(
     "JOB_SEARCH_KEYWORDS",
-    'Junior IT OR Practicas OR Becario OR Ciberseguridad'
+    'Programador Junior OR Desarrollador Junior OR Python OR Software OR Sistemas Linux OR QA'
 )
 JOB_SEARCH_LOCATION = os.getenv("JOB_SEARCH_LOCATION", "Sevilla, Spain")
 JOB_SCAN_MAX_RESULTS = int(os.getenv("JOB_SCAN_MAX_RESULTS", "15"))
@@ -66,8 +66,14 @@ MAX_DAILY_REACTIONS = int(os.getenv("MAX_DAILY_REACTIONS", "15"))
 CANDIDATE_PROFILE = {
     "name": "Gabriel Trujillo Vallejo",
     "location": "Sevilla",
-    "headline": "Desarrollador de Software Junior (DAM) | Python, Sistemas Linux & Ciberseguridad",
-    "background": "Estudiante/Graduado DAM (CESUR Sevilla) enfocado en ingeniería de software práctica, automatización en Python, sistemas Linux y ciberseguridad.",
-    "skills": ["Linux / Redes", "Ciberseguridad", "Python / Bash", "FastAPI / Docker", "SwiftUI", "QA / Testing"],
-    "target_roles": ["Desarrollador Junior", "Becario / Prácticas Ciberseguridad", "Administrador de Sistemas Junior", "Junior QA / Python", "Freelance"]
+    "headline": "Desarrollador de Software Junior (DAM) | Python, Backend & Sistemas Linux",
+    "background": "Estudiante/Graduado DAM (CESUR Sevilla) enfocado en ingeniería de software, desarrollo en Python/APIs, automatización QA y administración de sistemas Linux.",
+    "skills": ["Python / FastAPI", "Git / Testing (Pytest)", "Linux / Sistemas / Docker", "SQL / APIs REST", "SwiftUI / JS", "QA / Playwright"],
+    "target_roles": [
+        "Desarrollador de Software Junior (Python / Backend)",
+        "Programador Junior (DAM)",
+        "QA Automation / Testing Junior",
+        "Técnico de Sistemas Linux / DevOps Junior",
+        "Becario / Prácticas Desarrollo & Sistemas"
+    ]
 }

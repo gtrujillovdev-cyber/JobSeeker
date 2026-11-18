@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 
 import requests
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DATA_DIR
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, DATA_DIR, SCREENSHOTS_DIR
 from src.linkedin_publisher import LinkedInPublisher
 
 PENDING_DRAFTS_FILE = DATA_DIR / "pending_drafts.json"
@@ -28,6 +28,35 @@ def _save_drafts(drafts: Dict[str, Any]) -> None:
     except Exception as e:
         print(f"[!] Error guardando borradores: {e}")
 
+
+def expire_stale_drafts(max_age_hours: float = 24.0) -> Dict[str, Any]:
+    """Marca como 'expired' los borradores 'pending' con más de max_age_hours de antigüedad."""
+    drafts = _get_drafts()
+    changed = False
+    now = datetime.now()
+    for d_id, d_obj in drafts.items():
+        if d_obj.get("status") != "pending":
+            continue
+        created_at_str = d_obj.get("created_at", "")
+        if not created_at_str:
+            continue
+        try:
+            created_at = datetime.fromisoformat(created_at_str).replace(tzinfo=None)
+            age_hours = (now - created_at).total_seconds() / 3600
+            if age_hours > max_age_hours:
+                print(
+                    f"[DevDiary] Borrador pendiente {d_id} expirado automáticamente "
+                    f"({age_hours:.0f}h > {max_age_hours:.0f}h)."
+                )
+                d_obj["status"] = "expired"
+                d_obj["expired_reason"] = "auto_ttl_24h"
+                changed = True
+        except Exception:
+            continue
+    if changed:
+        _save_drafts(drafts)
+    return drafts
+
 class TelegramReviewer:
     """
     Sistema de aprobación en 1-click (Co-Pilot).
@@ -45,7 +74,8 @@ class TelegramReviewer:
         project_name: str,
         post_text: str,
         image_path: Optional[Any] = None,
-        first_comment: Optional[str] = None
+        first_comment: Optional[str] = None,
+        pill_id: Optional[str] = None
     ) -> Optional[str]:
         if not cls.is_configured():
             print("[TelegramReviewer] Token o Chat ID no configurados en .env")
@@ -63,6 +93,7 @@ class TelegramReviewer:
         drafts[draft_id] = {
             "draft_id": draft_id,
             "project_name": project_name,
+            "pill_id": pill_id,
             "text": post_text,
             "image_path": str(image_paths[0]) if image_paths else None,
             "image_paths": [str(p) for p in image_paths],
@@ -110,7 +141,11 @@ class TelegramReviewer:
                         "chat_id": TELEGRAM_CHAT_ID,
                         "caption": f"🖼️ Captura {idx}/{len(image_paths)} · {project_name}"
                     }
-                    requests.post(url_photo, data=data, files={"photo": photo}, timeout=20)
+                    r_p = requests.post(url_photo, data=data, files={"photo": photo}, timeout=25)
+                    if r_p.status_code != 200:
+                        print(f"[TelegramReviewer] [!] Error enviando foto {idx}/{len(image_paths)} ({r_p.status_code}): {r_p.text}")
+                    else:
+                        print(f"[TelegramReviewer] [✓] Foto {idx}/{len(image_paths)} enviada a Telegram.")
 
             msg_payload = {
                 "chat_id": TELEGRAM_CHAT_ID,
@@ -142,7 +177,7 @@ class TelegramReviewer:
         El scheduler integrado del bot lo publicará automáticamente a esa hora.
         """
         drafts = _get_drafts()
-        if draft_id not in drafts:
+        if draft_id not in drafts or drafts[draft_id].get("status") == "published":
             return None
         now = datetime.now()
         target = now.replace(hour=10, minute=0, second=0, microsecond=0)
@@ -152,10 +187,23 @@ class TelegramReviewer:
         drafts[draft_id]["status"] = "scheduled"
         drafts[draft_id]["scheduled_for"] = iso_str
         _save_drafts(drafts)
+
+        history_file = DATA_DIR / "dev_diary_history.json"
+        if history_file.exists():
+            try:
+                history = json.loads(history_file.read_text(encoding="utf-8"))
+                for rec in history:
+                    if rec.get("draft_id") == draft_id:
+                        rec["status"] = "scheduled"
+                        rec["scheduled_for"] = iso_str
+                history_file.write_text(json.dumps(history, indent=2, ensure_ascii=False), encoding="utf-8")
+            except Exception:
+                pass
+
         return target.strftime("%Y-%m-%d a las %H:%M")
 
     @classmethod
-    def publish_approved_draft(cls, draft_id: str) -> bool:
+    def publish_approved_draft(cls, draft_id: str, from_scheduler: bool = False) -> bool:
         """
         Publica un borrador previamente aprobado por su draft_id en LinkedIn
         (incluyendo galería de imágenes, primer comentario automático, URL directa y captura de confirmación).
@@ -166,16 +214,73 @@ class TelegramReviewer:
             return False
 
         draft = drafts[draft_id]
+        if draft.get("status") == "published" or (draft.get("status") == "publishing" and not from_scheduler):
+            print(f"[TelegramReviewer] [⛔] Borrador {draft_id} ya tiene estado '{draft.get('status')}'. Bloqueando doble publicación.")
+            return False
+
+        from src.anti_ban import AntiBanValidator
+        is_dup, dup_reason = AntiBanValidator.is_duplicate_publication(draft.get("text", ""), pill_id=draft.get("pill_id"))
+        if is_dup:
+            print(f"[TelegramReviewer] [⛔] Borrador {draft_id} bloqueado por duplicado: {dup_reason}")
+            drafts.pop(draft_id, None)
+            _save_drafts(drafts)
+            history_file = DATA_DIR / "dev_diary_history.json"
+            if history_file.exists():
+                try:
+                    hist = json.loads(history_file.read_text(encoding="utf-8"))
+                    cleaned = [h for h in hist if not (h.get("draft_id") == draft_id and h.get("status") != "published")]
+                    history_file.write_text(json.dumps(cleaned, indent=2, ensure_ascii=False), encoding="utf-8")
+                except Exception:
+                    pass
+            if cls.is_configured():
+                try:
+                    requests.post(
+                        f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                        json={
+                            "chat_id": TELEGRAM_CHAT_ID,
+                            "text": (
+                                f"⛔ *Publicación bloqueada por seguridad (contenido repetido)*\n"
+                                f"Motivo: `{dup_reason}`\n\n"
+                                f"Pulsa abajo para generar una píldora completamente nueva:"
+                            ),
+                            "parse_mode": "Markdown",
+                            "reply_markup": {
+                                "inline_keyboard": [[{"text": "📓 Generar borrador nuevo", "callback_data": "menu:publish"}]]
+                            }
+                        },
+                        timeout=15
+                    )
+                except Exception:
+                    pass
+            return False
+
+        # Bloqueo mutex persistente antes de lanzar Playwright para evitar dobles clics o carreras
+        draft["status"] = "publishing"
+        _save_drafts(drafts)
+
         publisher = LinkedInPublisher(dry_run=False)
-        img_list = [Path(p) for p in draft.get("image_paths", []) if p and Path(p).exists()]
+
+        def _resolve_img(p_str: str) -> Optional[Path]:
+            if not p_str:
+                return None
+            direct = Path(p_str)
+            if direct.exists():
+                return direct
+            fallback = SCREENSHOTS_DIR / direct.name
+            return fallback if fallback.exists() else None
+
+        img_list = [resolved for p in draft.get("image_paths", []) if (resolved := _resolve_img(p))]
         if not img_list and draft.get("image_path"):
-            img_list = [Path(draft["image_path"])]
+            resolved_single = _resolve_img(draft["image_path"])
+            if resolved_single:
+                img_list = [resolved_single]
 
         success = publisher.publish_post(
             text=draft["text"],
             image_path=img_list,
             project_name=draft["project_name"],
-            first_comment=draft.get("first_comment")
+            first_comment=draft.get("first_comment"),
+            pill_id=draft.get("pill_id")
         )
 
         draft["status"] = "published" if success else "failed"
@@ -209,12 +314,26 @@ class TelegramReviewer:
                 f"📁 Proyecto: {draft['project_name']}\n"
                 f"🕒 Fecha: {datetime.now().strftime('%Y-%m-%d %H:%M')}{url_line}"
                 if success else
-                f"❌ Error al publicar en LinkedIn para {draft['project_name']}. Revisa logs/."
+                f"❌ No se pudo publicar '{draft['project_name']}' (ID `{draft_id}`).\n"
+                f"Comprueba la sesión de LinkedIn o reintenta desde los botones."
             )
-            reply_markup = (
-                {"inline_keyboard": [[{"text": "🔗 Ver publicación en LinkedIn", "url": post_url}]]}
-                if post_url else None
-            )
+            if success:
+                reply_markup = (
+                    {"inline_keyboard": [[{"text": "🔗 Ver publicación en LinkedIn", "url": post_url}]]}
+                    if post_url else None
+                )
+            else:
+                reply_markup = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "🔁 Reintentar publicar", "callback_data": f"approve:{draft_id}"},
+                            {"text": "🔐 Salud LinkedIn", "callback_data": "menu:health"}
+                        ],
+                        [
+                            {"text": "🗑 Descartar borrador", "callback_data": f"reject:{draft_id}"}
+                        ]
+                    ]
+                }
             try:
                 if success and publisher.last_confirmation_screenshot and publisher.last_confirmation_screenshot.exists():
                     with open(publisher.last_confirmation_screenshot, "rb") as photo:

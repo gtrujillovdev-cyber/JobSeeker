@@ -34,12 +34,16 @@ class EngagementEngine:
             print("[Engagement] No hay empresas target. Ejecuta primero: python main.py --scan-jobs")
             return []
 
-        # Filtrar empresas ya contactadas con éxito en los últimos 30 registros
+        # Filtrar empresas ya contactadas con éxito en los últimos 60 días (ventana temporal, no por conteo)
         history = AntiBanValidator._get_engagement_records()
+        from datetime import datetime as _dt, timedelta as _td
+        cutoff_60d = (_dt.now() - _td(days=60)).isoformat()
         already_contacted = {
             r.get("target", "").strip().lower()
-            for r in history[-30:]
-            if r.get("action") == "connection" and r.get("status") == "success"
+            for r in history
+            if r.get("action") == "connection"
+            and r.get("status") == "success"
+            and r.get("timestamp", "9999") >= cutoff_60d
         }
 
         actions = []
@@ -91,12 +95,13 @@ class EngagementEngine:
         if discover_profiles and actions and not os.environ.get("PYTEST_CURRENT_TEST"):
             cls._discover_recruiter_previews(actions)
 
-        for act in actions:
+        for idx_act, act in enumerate(actions):
             if not act.get("note_text"):
                 act["note_text"] = cls._generate_connection_note(
                     act["target_company"],
                     act.get("target_name", "Responsable de Selección"),
-                    act.get("target_role", "Sistemas / Ciberseguridad / Desarrollo")
+                    act.get("target_headline") or act.get("target_role", "Sistemas / Ciberseguridad / Desarrollo"),
+                    variation_idx=idx_act
                 )
 
         return actions
@@ -104,90 +109,142 @@ class EngagementEngine:
     @classmethod
     def _discover_recruiter_previews(cls, actions: List[Dict[str, Any]]) -> None:
         """
-        Pre-busca en LinkedIn el primer perfil conectable de RRHH/Selección de cada empresa
-        para mostrar a Gabriel en Telegram el nombre real, cargo, enlace y nota exacta antes de aprobar.
+        Pre-busca en LinkedIn perfiles de 2º GRADO (contactos de tus contactos) en SEVILLA:
+        combina IT Recruiters/RRHH (~60%) y perfiles técnicos (Tech Lead, Developers, Sistemas ~40%)
+        para ampliar el círculo hacia oportunidades de programación y sistemas.
         """
-        if not BROWSER_PROFILE_DIR.exists():
+        from src.browser_helper import has_linkedin_session
+        if not has_linkedin_session():
             return
         try:
             from urllib.parse import quote_plus
             from playwright.sync_api import sync_playwright
             import re
 
-            print("[Engagement] Pre-buscando perfiles reales de RRHH para mostrar en Telegram...")
+            history = AntiBanValidator._get_engagement_records()
+            already_contacted_people = {
+                r.get("detail", "").lower()
+                for r in history[-60:]
+                if r.get("action") == "connection" and r.get("status") == "success"
+            }
+            seen_urls: set[str] = set()
+            seen_names: set[str] = set()
+
+            sevilla_circle_queries = [
+                'Sevilla ("IT Recruiter" OR "Talent Acquisition" OR "Seleccion IT" OR "Tech Recruiter")',
+                'Sevilla ("Tech Lead" OR "Engineering Manager" OR "CTO" OR "Backend") (Python OR Software)',
+                'Sevilla ("Responsable de Seleccion" OR "RRHH" OR "People") (IT OR Software OR Tech)',
+                'Sevilla ("Desarrollador" OR "Software Engineer" OR "DevOps" OR "Sistemas Linux")',
+            ]
+
+            print("[Engagement] Pre-buscando contactos de 2º grado (contactos de tus contactos) en Sevilla...")
             with sync_playwright() as p:
-                from src.browser_helper import get_playwright_browser_context
-                browser, context = get_playwright_browser_context(p)
+                from src.browser_helper import get_playwright_browser_context, close_playwright_context
+                context, browser = get_playwright_browser_context(p)
                 page = context.pages[0] if context.pages else context.new_page()
 
-                for act in actions:
+                for idx_act, act in enumerate(actions):
                     company = act["target_company"]
-                    query = f'{company} ("Recursos Humanos" OR RRHH OR recruiter OR "talent acquisition" OR seleccion)'
-                    # Priorizar contactos de 2º grado (contactos de mis contactos: network=["S"]) para máxima confianza
-                    search_url = (
-                        f"https://www.linkedin.com/search/results/people/"
-                        f"?keywords={quote_plus(query)}"
-                        f"&network=%5B%22S%22%5D"
-                        f"&origin=GLOBAL_SEARCH_HEADER"
-                    )
-                    try:
-                        page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
-                        time.sleep(2.5)
-                        connect_btn = page.locator(
-                            "a[href*='search-custom-invite'], a[aria-label*='conectar' i], button[aria-label*='conectar' i], "
-                            "a[aria-label*='to connect' i], button[aria-label*='to connect' i]"
-                        ).first
-                        if connect_btn.count() == 0 or not connect_btn.is_visible():
-                            # Fallback sin filtro estricto de red si no hay en 2º grado
-                            search_url_broad = f"https://www.linkedin.com/search/results/people/?keywords={quote_plus(query)}&origin=GLOBAL_SEARCH_HEADER"
-                            page.goto(search_url_broad, wait_until="domcontentloaded", timeout=20000)
-                            time.sleep(2.0)
-                            connect_btn = page.locator(
-                                "a[href*='search-custom-invite'], a[aria-label*='conectar' i], button[aria-label*='conectar' i], "
-                                "a[aria-label*='to connect' i], button[aria-label*='to connect' i]"
-                            ).first
-                        if connect_btn.count() == 0 or not connect_btn.is_visible():
+                    # SIEMPRE 2º grado (&network=%5B%22S%22%5D = contactos de mis contactos) y foco en Sevilla
+                    if idx_act % 3 == 1:
+                        candidate_queries = [
+                            f'{company} Sevilla ("Tech Lead" OR "Software Engineer" OR Backend OR Python OR Sistemas OR DevOps)',
+                            f'{company} ("Tech Lead" OR "Desarrollador" OR CTO OR "Engineering Manager" OR Sistemas) Sevilla',
+                            sevilla_circle_queries[idx_act % len(sevilla_circle_queries)],
+                        ]
+                    else:
+                        candidate_queries = [
+                            f'{company} Sevilla ("Recursos Humanos" OR RRHH OR recruiter OR "talent acquisition" OR seleccion OR IT)',
+                            f'{company} ("Recursos Humanos" OR RRHH OR recruiter OR "talent acquisition" OR seleccion) Sevilla',
+                            sevilla_circle_queries[idx_act % len(sevilla_circle_queries)],
+                        ]
+
+                    picked_ok = False
+                    for q_idx, query in enumerate(candidate_queries):
+                        if picked_ok:
+                            break
+                        search_url = (
+                            f"https://www.linkedin.com/search/results/people/"
+                            f"?keywords={quote_plus(query)}"
+                            f"&network=%5B%22S%22%5D"
+                            f"&origin=GLOBAL_SEARCH_HEADER"
+                        )
+                        try:
+                            page.goto(search_url, wait_until="domcontentloaded", timeout=20000)
+                            time.sleep(2.5)
+                            cards = page.evaluate("""() => {
+                                const items = Array.from(document.querySelectorAll('div[role="listitem"], li.reusable-search__result-container, [data-view-name="search-entity-result-universal-template"]'));
+                                const results = [];
+                                for (const item of items) {
+                                    const link = item.querySelector('a[href*="/in/"]');
+                                    if (!link) continue;
+                                    const rawUrl = (link.href || '').split('?')[0];
+                                    const parts = rawUrl.split('/in/');
+                                    if (parts.length < 2) continue;
+                                    const vanity = parts[1].split('/')[0].trim();
+                                    if (!vanity || vanity === 'opportunities') continue;
+                                    const fullText = (item.innerText || '').trim();
+                                    const lines = fullText.split('\\n').map(l => l.trim()).filter(Boolean);
+                                    if (!lines.length) continue;
+                                    const name = lines[0].split('•')[0].trim();
+                                    const cleanLines = lines.filter(l => !l.startsWith('•') && l !== 'Conectar' && l !== 'Seguir' && l !== 'Enviar mensaje');
+                                    const headline = cleanLines.length > 1 ? cleanLines[1] : '';
+                                    const location = cleanLines.length > 2 ? cleanLines[2] : 'Sevilla';
+                                    const mutual = cleanLines.find(l => l.includes('en común') || l.includes('shared connection')) || 'Contacto de 2º grado en común';
+                                    results.push({
+                                        name,
+                                        vanity,
+                                        url: 'https://www.linkedin.com/in/' + vanity + '/',
+                                        invite_href: '/preload/custom-invite/?vanityName=' + vanity,
+                                        headline,
+                                        location,
+                                        mutual
+                                    });
+                                }
+                                return results;
+                            }""")
+
+                            for card in (cards or []):
+                                cand_name = (card.get("name") or "").strip()
+                                cand_url = (card.get("url") or "").strip()
+                                href_attr = (card.get("invite_href") or "").strip()
+
+                                if not cand_name or "miembro de linkedin" in cand_name.lower() or "linkedin member" in cand_name.lower():
+                                    continue
+                                if cand_name.lower() in seen_names:
+                                    continue
+                                if cand_url and cand_url in seen_urls:
+                                    continue
+                                if any(cand_name.lower() in prev for prev in already_contacted_people):
+                                    continue
+
+                                seen_names.add(cand_name.lower())
+                                if cand_url:
+                                    seen_urls.add(cand_url)
+
+                                act["target_name"] = cand_name
+                                if card.get("headline"):
+                                    act["target_headline"] = card["headline"]
+                                if cand_url:
+                                    act["target_url"] = cand_url
+                                if href_attr:
+                                    act["invite_href"] = href_attr
+                                act["mutual_info"] = card.get("mutual") or "Contacto de 2º grado en común"
+                                act["location_info"] = card.get("location") or "Sevilla"
+                                if q_idx == 2:
+                                    act["target_company"] = f"Círculo Sevilla ({act['target_headline'][:28]})"
+                                picked_ok = True
+                                break
+                        except Exception:
                             continue
 
-                        aria = connect_btn.get_attribute("aria-label") or ""
-                        href_attr = connect_btn.get_attribute("href") or ""
-                        m = re.search(r"[iI]nvita a\s+(.+?)\s+a conectar", aria) or re.search(r"[iI]nvite\s+(.+?)\s+to connect", aria)
-                        if m:
-                            act["target_name"] = m.group(1).strip()
-                        if "vanityName=" in href_attr:
-                            vn = href_attr.split("vanityName=")[-1].split("&")[0]
-                            if vn:
-                                act["target_url"] = f"https://www.linkedin.com/in/{vn}/"
-
-                        info = connect_btn.evaluate("""(el) => {
-                            let card = el.closest('li, .reusable-search__result-container, [data-view-name="search-entity-result-universal-template"]') || el.parentElement?.parentElement?.parentElement;
-                            if (!card) return {name: '', headline: '', url: ''};
-                            const link = card.querySelector('a[href*="/in/"]');
-                            const url = link ? link.href.split('?')[0] : '';
-                            const nameSpan = card.querySelector('a[href*="/in/"] span[aria-hidden="true"]');
-                            const name = nameSpan ? nameSpan.innerText.trim().split('\\n')[0].trim() : '';
-                            const sub = card.querySelector('.entity-result__primary-subtitle, .t-14.t-black.t-normal');
-                            const headline = sub ? sub.innerText.trim().split('\\n')[0].trim() : '';
-                            return {name, headline, url};
-                        }""")
-                        if info.get("name") and act["target_name"] == "Responsable de Selección":
-                            act["target_name"] = info["name"].split("•")[0].strip()
-                        if info.get("headline"):
-                            act["target_headline"] = info["headline"]
-                        if info.get("url") and not act.get("target_url"):
-                            act["target_url"] = info["url"]
-                    except Exception:
-                        continue
-
-                context.close()
-                if browser_instance:
-                    browser_instance.close()
+                close_playwright_context(context, browser, persist=True)
         except Exception as e:
             print(f"[Engagement] Aviso en pre-búsqueda de perfiles: {e}")
 
     @classmethod
     def _build_engagement_message_and_keyboard(cls, actions: List[Dict[str, Any]]) -> tuple[str, dict]:
-        lines = ["🎯 *PLAN DE NETWORKING RRHH (CON VISTA PREVIA)*\n"]
+        lines = ["🎯 *CÍRCULO DE CONTACTOS EN SEVILLA (2º GRADO · CONTACTOS DE TUS CONTACTOS)*\n"]
         summary = AntiBanValidator.get_today_engagement_summary()
         if summary:
             lines.append("Actividad registrada hoy:")
@@ -201,10 +258,13 @@ class EngagementEngine:
             state_icon = "✅" if enabled else "⏭️ (Omitido)"
             person = action.get("target_name", "Responsable de Selección")
             headline = action.get("target_headline", "RRHH / Selección")
+            mutual = action.get("mutual_info", "Contacto de 2º grado (contactos en común)")
+            loc = action.get("location_info", "Sevilla")
             url = action.get("target_url", "")
             note = action.get("note_text", "")
             lines.append(f"*{i}. {state_icon} {action['target_company']}* ({action.get('target_role', '')[:45]})")
             lines.append(f"   👤 *{person}* — {headline[:60]}")
+            lines.append(f"   🤝 *2º grado ({loc})*: _{mutual}_")
             if url:
                 lines.append(f"   🔗 {url}")
             if note:
@@ -375,7 +435,7 @@ class EngagementEngine:
 
         try:
             from playwright.sync_api import sync_playwright
-            from src.browser_helper import get_playwright_browser_context
+            from src.browser_helper import get_playwright_browser_context, close_playwright_context
 
             with sync_playwright() as p:
                 context, browser_instance = get_playwright_browser_context(p)
@@ -383,7 +443,13 @@ class EngagementEngine:
                 print(f"[Engagement] Estableciendo sesión en Feed de LinkedIn...")
                 page.goto("https://www.linkedin.com/feed/", wait_until="domcontentloaded", timeout=30000)
                 time.sleep(2)
+                feed_url = page.url.lower()
                 print(f"[Engagement] URL Feed: {page.url} (Título: {page.title()})")
+
+                if "login" in feed_url or "checkpoint" in feed_url or "authwall" in feed_url:
+                    print(f"[Engagement] [⛔] Sesión expirada o requiere login ({page.url}). Abortando plan.")
+                    close_playwright_context(context, browser_instance, persist=False)
+                    return [{**action, "status": "error", "reason": "session_expired"} for action in actions]
 
                 for action in actions:
                     if not AntiBanValidator.check_engagement_limit(action["type"]):
@@ -404,9 +470,7 @@ class EngagementEngine:
 
                     results.append(result)
 
-                context.close()
-                if browser_instance:
-                    browser_instance.close()
+                close_playwright_context(context, browser_instance, persist=True)
 
         except Exception as e:
             print(f"[Engagement] Error en Playwright: {e}")
@@ -484,140 +548,194 @@ class EngagementEngine:
 
     @classmethod
     def _execute_connection(cls, page, action: Dict[str, Any]) -> Dict[str, Any]:
-        """Busca perfiles de RRHH / Talento de la empresa y envia solicitud real verificando el diálogo de invitación."""
+        """Conecta exclusivamente con contactos de 2º grado (contactos de tus contactos) en Sevilla."""
         company = action["target_company"]
         target_role = action.get("target_role", "Desarrollo de Software / Ciberseguridad / Sistemas")
-        print(f"  [Connect] Buscando responsables de RRHH/Selección de '{company}' (Rol: {target_role})...")
+        profile_name = action.get("target_name") or "Responsable de Selección"
+        profile_url = action.get("target_url") or ""
+        invite_href = action.get("invite_href") or ""
+        print(f"  [Connect] Conectando con contacto de 2º grado en Sevilla: {profile_name} ('{company}')...")
 
         try:
             import re
             from urllib.parse import quote_plus
-            # Priorizar contactos de 2º grado (contactos de mis contactos: network=["S"]) para red de confianza
-            query = f'{company} ("Recursos Humanos" OR RRHH OR recruiter OR "talent acquisition" OR seleccion)'
-            search_url = (
-                f"https://www.linkedin.com/search/results/people/"
-                f"?keywords={quote_plus(query)}"
-                f"&network=%5B%22S%22%5D"
-                f"&origin=GLOBAL_SEARCH_HEADER"
-            )
-            page.goto(search_url, wait_until="domcontentloaded", timeout=25000)
-            time.sleep(3.0)
-            print(f"  [Connect] URL búsqueda personas (2º grado): {page.url}")
+            connect_btn = None
 
-            # Buscar botones o enlaces reales de "Conectar" en los resultados
-            strict_selector = (
-                "a[href*='search-custom-invite'], a[aria-label*='conectar' i], button[aria-label*='conectar' i], "
-                "a[aria-label*='to connect' i], button[aria-label*='to connect' i]"
-            )
-            connect_locator = page.locator(strict_selector)
-            total_candidates = connect_locator.count()
-
-            # Si no hay candidatos de 2º grado, ampliar a toda la red para esa empresa
-            if total_candidates == 0:
-                broad_query_url = (
+            if not (invite_href and "/preload/" in invite_href):
+                # Búsqueda estricta en 2º grado (network=["S"]) + Sevilla
+                query = (
+                    f'{profile_name} Sevilla'
+                    if profile_name != "Responsable de Selección"
+                    else f'{company} Sevilla ("Recursos Humanos" OR RRHH OR recruiter OR "talent acquisition" OR seleccion)'
+                )
+                search_url = (
                     f"https://www.linkedin.com/search/results/people/"
                     f"?keywords={quote_plus(query)}"
+                    f"&network=%5B%22S%22%5D"
                     f"&origin=GLOBAL_SEARCH_HEADER"
                 )
-                page.goto(broad_query_url, wait_until="domcontentloaded", timeout=25000)
+                page.goto(search_url, wait_until="domcontentloaded", timeout=25000)
                 time.sleep(3.0)
-                connect_locator = page.locator(strict_selector)
-                total_candidates = connect_locator.count()
+                print(f"  [Connect] URL búsqueda personas (2º grado · Sevilla): {page.url}")
 
-            if total_candidates == 0:
-                # Fallback 2: búsqueda más amplia en la misma empresa
-                broad_query = f"{company} (RRHH OR Talent OR People OR Tech OR Engineering)"
-                broad_url = f"https://www.linkedin.com/search/results/people/?keywords={quote_plus(broad_query)}&origin=GLOBAL_SEARCH_HEADER"
-                page.goto(broad_url, wait_until="domcontentloaded", timeout=25000)
-                time.sleep(3.0)
-                connect_locator = page.locator(strict_selector)
-                total_candidates = connect_locator.count()
+                cards = page.evaluate("""() => {
+                    const items = Array.from(document.querySelectorAll('div[role="listitem"], li.reusable-search__result-container, [data-view-name="search-entity-result-universal-template"]'));
+                    const results = [];
+                    for (const item of items) {
+                        const link = item.querySelector('a[href*="/in/"]');
+                        if (!link) continue;
+                        const rawUrl = (link.href || '').split('?')[0];
+                        const parts = rawUrl.split('/in/');
+                        if (parts.length < 2) continue;
+                        const vanity = parts[1].split('/')[0].trim();
+                        if (!vanity || vanity === 'opportunities') continue;
+                        const fullText = (item.innerText || '').trim();
+                        const lines = fullText.split('\\n').map(l => l.trim()).filter(Boolean);
+                        if (!lines.length) continue;
+                        const name = lines[0].split('•')[0].trim();
+                        if (!name || name.toLowerCase().includes('miembro de linkedin') || name.toLowerCase().includes('linkedin member')) continue;
+                        results.push({
+                            name,
+                            vanity,
+                            url: 'https://www.linkedin.com/in/' + vanity + '/',
+                            invite_href: '/preload/custom-invite/?vanityName=' + vanity
+                        });
+                    }
+                    return results;
+                }""")
 
-            if total_candidates == 0:
-                return {**action, "status": "skipped", "reason": "no_connect_button"}
-
-            connect_btn = connect_locator.first
-            if not connect_btn.is_visible():
-                return {**action, "status": "skipped", "reason": "connect_button_not_visible"}
-
-            # Extraer nombre, cargo y URL del perfil desde aria-label / href / DOM
-            profile_name = action.get("target_name") or "Responsable de Selección"
-            profile_url = action.get("target_url") or ""
-            aria = connect_btn.get_attribute("aria-label") or ""
-            invite_href = connect_btn.get_attribute("href") or ""
-
-            m = re.search(r"[iI]nvita a\s+(.+?)\s+a conectar", aria) or re.search(r"[iI]nvite\s+(.+?)\s+to connect", aria)
-            if m:
-                profile_name = m.group(1).strip()
-
-            if "vanityName=" in invite_href and not profile_url:
-                vanity = invite_href.split("vanityName=")[-1].split("&")[0]
-                if vanity:
-                    profile_url = f"https://www.linkedin.com/in/{vanity}/"
-
-            if profile_name == "Responsable de Selección" or not profile_url:
-                try:
-                    dom_info = connect_btn.evaluate("""(el) => {
-                        let card = el.closest('li, .reusable-search__result-container, [data-view-name="search-entity-result-universal-template"]') || el.parentElement?.parentElement?.parentElement;
-                        if (!card) return {name: '', url: ''};
-                        const link = card.querySelector('a[href*="/in/"]');
-                        const url = link ? link.href.split('?')[0] : '';
-                        const nameEl = card.querySelector('a[href*="/in/"] span[aria-hidden="true"], .entity-result__title-text a span[aria-hidden="true"], a[href*="/in/"]');
-                        const name = nameEl && nameEl.innerText ? nameEl.innerText.trim().split('\\n')[0].trim() : '';
-                        return {name, url};
+                if not cards:
+                    fallback_2nd_sevilla = (
+                        f"https://www.linkedin.com/search/results/people/"
+                        f"?keywords={quote_plus('Sevilla (RRHH OR Recruiter OR Talent OR Seleccion OR IT)')}"
+                        f"&network=%5B%22S%22%5D"
+                        f"&origin=GLOBAL_SEARCH_HEADER"
+                    )
+                    page.goto(fallback_2nd_sevilla, wait_until="domcontentloaded", timeout=25000)
+                    time.sleep(3.0)
+                    cards = page.evaluate("""() => {
+                        const items = Array.from(document.querySelectorAll('div[role="listitem"], li.reusable-search__result-container, [data-view-name="search-entity-result-universal-template"]'));
+                        const results = [];
+                        for (const item of items) {
+                            const link = item.querySelector('a[href*="/in/"]');
+                            if (!link) continue;
+                            const rawUrl = (link.href || '').split('?')[0];
+                            const parts = rawUrl.split('/in/');
+                            if (parts.length < 2) continue;
+                            const vanity = parts[1].split('/')[0].trim();
+                            if (!vanity || vanity === 'opportunities') continue;
+                            const fullText = (item.innerText || '').trim();
+                            const lines = fullText.split('\\n').map(l => l.trim()).filter(Boolean);
+                            if (!lines.length) continue;
+                            const name = lines[0].split('•')[0].trim();
+                            if (!name || name.toLowerCase().includes('miembro de linkedin') || name.toLowerCase().includes('linkedin member')) continue;
+                            results.push({
+                                name,
+                                vanity,
+                                url: 'https://www.linkedin.com/in/' + vanity + '/',
+                                invite_href: '/preload/custom-invite/?vanityName=' + vanity
+                            });
+                        }
+                        return results;
                     }""")
-                    if dom_info.get("name") and len(dom_info["name"]) > 2 and "conectar" not in dom_info["name"].lower():
-                        profile_name = dom_info["name"].split("•")[0].strip()
-                    if dom_info.get("url") and not profile_url:
-                        profile_url = dom_info["url"]
-                except Exception:
-                    pass
+
+                if not cards:
+                    return {**action, "status": "skipped", "reason": "no_2nd_degree_connect_button"}
+
+                picked = cards[0]
+                profile_name = picked["name"]
+                profile_url = picked["url"]
+                invite_href = picked["invite_href"]
+
+                # Actualizar nota con el nombre real si antes decía "Responsable de Selección"
+                action["note_text"] = cls._generate_connection_note(
+                    company,
+                    profile_name,
+                    target_role
+                )
 
             print(f"  [Connect] Contacto seleccionado: {profile_name} ({profile_url or invite_href})")
 
-            # Abrir modal de invitación (navegando a /preload/search-custom-invite/ si es un enlace, o clickando)
+            # Abrir modal de invitación navegando a /preload/custom-invite/
             if invite_href and "/preload/" in invite_href:
                 full_invite_url = invite_href if invite_href.startswith("http") else f"https://www.linkedin.com{invite_href}"
                 page.goto(full_invite_url, wait_until="domcontentloaded", timeout=25000)
                 time.sleep(3.5)
-            else:
+            elif connect_btn is not None:
                 try:
                     connect_btn.click(timeout=5000)
                 except Exception:
                     connect_btn.evaluate("el => el.click()")
                 time.sleep(2.5)
 
-            # Localizar el botón de envío dentro del diálogo de invitación ("Enviar sin nota" garantiza envío 100% en cuentas Free)
-            send_no_note_btn = page.locator(
-                "div[role='dialog'] button[aria-label='Enviar sin nota'], "
-                "div[role='dialog'] button:has-text('Enviar sin nota'), "
-                "div[role='dialog'] button[aria-label='Send without a note'], "
-                "div[role='dialog'] button:has-text('Send without a note'), "
-                "button[aria-label='Enviar sin nota'], "
-                "button:has-text('Enviar sin nota')"
-            ).first
-
             sent_ok = False
             note_used = ""
 
-            if send_no_note_btn.count() > 0 and send_no_note_btn.is_visible() and send_no_note_btn.is_enabled():
-                try:
-                    send_no_note_btn.click(timeout=5000)
-                except Exception:
-                    send_no_note_btn.evaluate("el => el.click()")
-                time.sleep(2.5)
-                sent_ok = True
-            else:
-                # Fallback: si el diálogo muestra directamente "Enviar invitación"
-                direct_send = page.locator(
-                    "div[role='dialog'] button[aria-label='Enviar invitación'], "
-                    "div[role='dialog'] button[aria-label='Send invitation']"
-                ).first
-                if direct_send.count() > 0 and direct_send.is_visible() and direct_send.is_enabled():
+            # Intentar enviar con la nota tipo fija si LinkedIn permite "Añadir una nota"
+            note_to_send = (action.get("note_text") or "").strip()[:195]
+            if note_to_send:
+                clicked_add_note = page.evaluate("""() => {
+                    const btns = Array.from(document.querySelectorAll('div[role="dialog"] button, button'));
+                    const addBtn = btns.find(b => {
+                        if (b.disabled) return false;
+                        const txt = (b.innerText || '').trim().toLowerCase();
+                        const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                        return txt.includes('añadir una nota') || txt.includes('add a note') || aria.includes('añadir una nota') || aria.includes('add a note');
+                    });
+                    if (addBtn) { addBtn.click(); return true; }
+                    return false;
+                }""")
+                if clicked_add_note:
                     try:
-                        direct_send.click(timeout=5000)
+                        time.sleep(1.5)
+                        textarea = page.locator("div[role='dialog'] textarea[name='message'], div[role='dialog'] textarea#custom-message, div[role='dialog'] textarea").first
+                        if textarea.count() > 0:
+                            textarea.fill(note_to_send)
+                            time.sleep(0.8)
+                            clicked_send_note = page.evaluate("""() => {
+                                const btns = Array.from(document.querySelectorAll('div[role="dialog"] button'));
+                                const sendBtn = btns.find(b => {
+                                    if (b.disabled) return false;
+                                    const txt = (b.innerText || '').trim().toLowerCase();
+                                    const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                                    return txt === 'enviar' || txt === 'send' || aria.includes('enviar invitación') || aria.includes('send invitation');
+                                });
+                                if (sendBtn) { sendBtn.click(); return true; }
+                                return false;
+                            }""")
+                            if clicked_send_note:
+                                time.sleep(2.5)
+                                sent_ok = True
+                                note_used = note_to_send
+                        if not sent_ok:
+                            # Si LinkedIn bloqueó la nota (límite mensual Free), volver atrás al diálogo normal
+                            page.evaluate("""() => {
+                                const btns = Array.from(document.querySelectorAll('div[role="dialog"] button'));
+                                const backBtn = btns.find(b => {
+                                    const txt = (b.innerText || '').trim().toLowerCase();
+                                    const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                                    return txt.includes('cancelar') || txt.includes('atrás') || aria.includes('cancelar') || aria.includes('atrás') || aria.includes('back');
+                                });
+                                if (backBtn) backBtn.click();
+                            }""")
+                            time.sleep(1.0)
                     except Exception:
-                        direct_send.evaluate("el => el.click()")
+                        pass
+
+            # Fallback estándar / cuenta Free sin cuota de notas: "Enviar sin nota"
+            if not sent_ok:
+                clicked_no_note = page.evaluate("""() => {
+                    const btns = Array.from(document.querySelectorAll('div[role="dialog"] button, button'));
+                    const sendNoNote = btns.find(b => {
+                        if (b.disabled) return false;
+                        const txt = (b.innerText || '').trim().toLowerCase();
+                        const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                        return txt.includes('enviar sin nota') || txt.includes('send without a note') || aria.includes('enviar sin nota') || aria.includes('send without a note') || aria === 'enviar invitación' || aria === 'send invitation';
+                    });
+                    if (sendNoNote) { sendNoNote.click(); return true; }
+                    return false;
+                }""")
+                if clicked_no_note:
                     time.sleep(2.5)
                     sent_ok = True
 
@@ -633,9 +751,10 @@ class EngagementEngine:
                 }
 
             # Si quedó algún modal abierto, cerrarlo
-            dismiss = page.locator("div[role='dialog'] button[aria-label='Descartar'], div[role='dialog'] button[aria-label='Dismiss']").first
-            if dismiss.count() > 0 and dismiss.is_visible():
-                dismiss.click()
+            page.evaluate("""() => {
+                const dismiss = document.querySelector('div[role="dialog"] button[aria-label="Descartar"], div[role="dialog"] button[aria-label="Dismiss"]');
+                if (dismiss) dismiss.click();
+            }""")
 
             return {**action, "status": "skipped", "reason": "send_button_not_enabled_in_dialog"}
 
@@ -671,25 +790,23 @@ class EngagementEngine:
 
     @staticmethod
     def _generate_comment(company: str, post_context: str) -> Optional[str]:
-        """Genera un comentario tecnico breve con Gemini."""
+        """Genera un comentario tecnico breve, natural y sin muletillas de IA."""
         if not GEMINI_API_KEY:
-            return f"Interesante enfoque. Trabajando en sistemas similares con Python, la gestion de estos retos en produccion es clave. Gracias por compartir."
+            return "Muy buen punto. Cuando he montado cosas parecidas en Python, esa parte suele ser justo donde más se nota la diferencia al llevarlo a uso real."
 
         try:
             from google import genai
             client = genai.Client(api_key=GEMINI_API_KEY)
 
-            prompt = f"""Genera un comentario breve (2-3 frases, maximo 200 caracteres) para un post de LinkedIn de la empresa {company}.
+            prompt = f"""Escribe un comentario corto (1-2 frases, máximo 190 caracteres) para un post de LinkedIn de {company}.
 
             Contexto del post: {post_context[:300]}
 
             REGLAS:
-            - Tono profesional y tecnico, como un ingeniero de software comentando a un colega.
-            - Aporta valor: una observacion tecnica, pregunta inteligente o experiencia relacionada.
-            - PROHIBIDO: 'gran post', 'totalmente de acuerdo', 'inspirador', emojis excesivos.
-            - PROHIBIDO: autopromocion directa o mencionar tus proyectos.
-            - Escribe en espanol.
-            - Genera SOLO el texto del comentario, sin comillas ni explicaciones.
+            - Escribe como un desarrollador real español hablando de tú a tú a un compañero del sector.
+            - Nada de tono corporativo ni clichés de IA ('gran post', 'interesante planteamiento', 'totalmente de acuerdo', 'marca la diferencia en producción', 'sinergias', emojis).
+            - Aporta una pregunta concreta o un detalle práctico breve.
+            - Devuelve SOLO el texto en español, sin comillas.
             """
 
             for model_name in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
@@ -702,53 +819,36 @@ class EngagementEngine:
         except Exception:
             pass
 
-        return "Interesante planteamiento. En mi experiencia con sistemas similares, este tipo de decisiones de arquitectura marcan la diferencia en produccion."
+        return "Muy buen punto. En proyectos propios con Python suele ser justo la parte que más tiempo ahorra luego al mantenerlo."
 
     @staticmethod
-    def _generate_connection_note(company: str, name: str, target_role: str = "Sistemas / Ciberseguridad / Desarrollo") -> str:
-        """Genera una nota personalizada para solicitud de conexion (<= 195 chars para respetar limite de 200 chars de LinkedIn Free)."""
-        full_greeting = f"Hola {name}," if name and name != "Responsable de Selección" else "Hola,"
-        first_name = name.split()[0] if name and name != "Responsable de Selección" else ""
-        greeting = f"Hola {first_name}," if first_name else "Hola,"
+    def _generate_connection_note(
+        company: str,
+        name: str,
+        target_role: str = "Sistemas / Ciberseguridad / Desarrollo",
+        variation_idx: Optional[int] = None
+    ) -> str:
+        """
+        Genera el mensaje tipo fijo, honesto y directo de presentación para todas las conexiones,
+        personalizado siempre con el nombre propio del contacto (< 200 caracteres).
+        """
+        raw_name = (name or "").strip()
+        if raw_name and raw_name != "Responsable de Selección" and "miembro de linkedin" not in raw_name.lower():
+            first_name = raw_name.split()[0].strip(",.")
+            greeting = f"Hola {first_name},"
+        else:
+            greeting = "Hola,"
 
-        if not GEMINI_API_KEY:
-            return (
-                f"{full_greeting} soy Gabriel Trujillo (DAM en Sevilla: Linux, Ciberseguridad y Python). "
-                f"Sigo a {company} ({target_role[:22]}) y me encantaría conectar."
-            )[:195]
-
-        try:
-            from google import genai
-            from config import CANDIDATE_PROFILE
-            client = genai.Client(api_key=GEMINI_API_KEY)
-
-            prompt = f"""Genera una nota breve para una solicitud de conexión en LinkedIn.
-            Destinatario: {name} (RRHH / Selección en {company}).
-            Área o vacante detectada en {company}: {target_role}.
-            Remitente: {CANDIDATE_PROFILE['name']}.
-            Perfil: Desarrollador Junior / Graduado DAM en Sevilla (Linux, Ciberseguridad, Python/IA).
-
-            REGLAS ESTRICTAS:
-            - Máximo 185 caracteres (el límite de LinkedIn Free es 200 caracteres).
-            - Tono cercano, profesional y directo.
-            - Menciona Sevilla y tu interés en {company}.
-            - Devuelve SOLO el texto de la nota en español, sin comillas.
-            """
-
-            for model_name in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
-                try:
-                    response = client.models.generate_content(model=model_name, contents=prompt)
-                    if response.text and len(response.text.strip()) > 20:
-                        return response.text.strip()[:195]
-                except Exception:
-                    continue
-        except Exception:
-            pass
-
-        return (
-            f"{greeting} soy Gabriel Trujillo (DAM en Sevilla: Linux, Ciberseguridad y Python). "
-            f"Sigo a {company} ({target_role[:25]}) y me gustaría conectar."
-        )[:195]
+        note = (
+            f"{greeting} soy Gabriel. Acabo de terminar mis estudios de DAM y busco mi primera "
+            f"oportunidad en el mundo IT con muchas ganas de aportar y aprender. ¿Conectamos?"
+        )
+        if len(note) > 195:
+            note = (
+                f"{greeting} soy Gabriel. Acabo de terminar DAM y busco mi primera oportunidad "
+                f"en el mundo IT con muchas ganas. ¿Conectamos?"
+            )
+        return note[:195]
 
     @classmethod
     def _report_results(cls, results: List[Dict[str, Any]], chat_id: int) -> None:
@@ -777,6 +877,11 @@ class EngagementEngine:
             lines.append("\nOmitidos:")
             for r in skipped[:3]:
                 lines.append(f"  - {r['target_company']}: {r.get('reason', '?')}")
+
+        session_err = any(r.get("reason") == "session_expired" for r in results)
+        if session_err:
+            lines.append("\n⚠️ *Tu sesión de LinkedIn ha expirado o requiere login.*")
+            lines.append("Ejecuta /health o renueva la sesión para poder enviar invitaciones.")
 
         text = "\n".join(lines)
 

@@ -1,9 +1,6 @@
 name: JobSeeker Autonomous Cloud Pipeline
 
 on:
-  schedule:
-    # 08:30 UTC = 09:30 o 10:30 Madrid (Lunes a Viernes)
-    - cron: '30 8 * * 1-5'
   workflow_dispatch:
     inputs:
       action:

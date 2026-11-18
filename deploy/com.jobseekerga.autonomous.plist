@@ -7,18 +7,18 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>/Users/gabrieltrujillovallejo/Documents/GtrujilloMacDoc/GitHub/GitGa/Developer/Projects/JobSeekerGA/run_autonomous.sh</string>
+        <string>/Users/gabrieltrujillovallejo/projects/AI/JobSeekerGA/run_autonomous.sh</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/gabrieltrujillovallejo/Documents/GtrujilloMacDoc/GitHub/GitGa/Developer/Projects/JobSeekerGA</string>
+    <string>/Users/gabrieltrujillovallejo/projects/AI/JobSeekerGA</string>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/gabrieltrujillovallejo/Documents/GtrujilloMacDoc/GitHub/GitGa/Developer/Projects/JobSeekerGA/logs/launchd_autonomous.log</string>
+    <string>/Users/gabrieltrujillovallejo/projects/AI/JobSeekerGA/logs/launchd_autonomous.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/gabrieltrujillovallejo/Documents/GtrujilloMacDoc/GitHub/GitGa/Developer/Projects/JobSeekerGA/logs/launchd_autonomous_err.log</string>
+    <string>/Users/gabrieltrujillovallejo/projects/AI/JobSeekerGA/logs/launchd_autonomous_err.log</string>
     <key>ProcessType</key>
     <string>Background</string>
     <key>Nice</key>
