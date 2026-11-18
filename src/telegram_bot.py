@@ -36,13 +36,23 @@ from src.telegram_reviewer import TelegramReviewer, _get_drafts, _save_drafts, e
 from src.dev_diary import DevDiaryGenerator
 from src.easy_apply import EasyApplyEngine
 from src.resource_governor import ResourceGovernor
+from src.invitation_manager import InvitationManager
+from src.telegram_card_presenter import (
+    render_progress_bar,
+    format_status_card,
+    format_job_card,
+    format_invitation_card,
+    format_simple_notification
+)
 from config import BROWSER_PROFILE_DIR
 
 # Almacen temporal y persistente de acciones de engagement y candidaturas Easy Apply pendientes de aprobacion
 PENDING_ENGAGEMENT_FILE = DATA_DIR / "pending_engagement.json"
+PENDING_INVITATIONS_FILE = DATA_DIR / "pending_invitations.json"
 DAILY_SCHEDULER_STATE_FILE = DATA_DIR / "daily_scheduler_state.json"
 _pending_engagement_actions = []
 _pending_easy_apply_jobs = []
+_pending_invitations = []
 
 
 class TelegramBot:
@@ -182,8 +192,6 @@ class TelegramBot:
     @classmethod
     def cmd_status(cls):
         today = date.today().isoformat()
-
-        # Posts publicados hoy
         pub_records = AntiBanValidator.get_records()
         today_posts = [r for r in pub_records
                        if r.get("date", "").startswith(today) and r.get("status") == "success"]
@@ -191,36 +199,30 @@ class TelegramBot:
         # Engagement de hoy
         eng_summary = AntiBanValidator.get_today_engagement_summary()
 
-        # Ofertas escaneadas hoy
-        today_jobs = JobScanner.get_today_results()
+        # Cargar invitaciones pendientes si existen
+        pending_inv_count = 0
+        if PENDING_INVITATIONS_FILE.exists():
+            try:
+                inv_data = json.loads(PENDING_INVITATIONS_FILE.read_text(encoding="utf-8"))
+                pending_inv_count = len(inv_data)
+            except Exception:
+                pass
 
-        # Borradores pendientes
-        drafts = _get_drafts()
-        pending = [d for d in drafts.values() if d.get("status") == "pending"]
-
-        lines = [
-            f"*DASHBOARD - {today}*\n",
-            f"Posts publicados: {len(today_posts)}/{MAX_DAILY_POSTS}",
-            f"Ofertas escaneadas: {len(today_jobs)}",
-            f"Borradores pendientes: {len(pending)}",
-            ""
-        ]
-
-        if eng_summary:
-            lines.append("*Engagement:*")
-            for action, count in eng_summary.items():
-                limit = {"comment": MAX_DAILY_COMMENTS,
-                         "connection": MAX_DAILY_CONNECTIONS,
-                         "reaction": MAX_DAILY_REACTIONS}.get(action, "?")
-                lines.append(f"  {action}: {count}/{limit}")
-        else:
-            lines.append("Engagement: sin actividad hoy")
-
-        if today_jobs:
-            top_companies = list({j["company"] for j in today_jobs})[:5]
-            lines.append(f"\n*Empresas detectadas:* {', '.join(top_companies)}")
-
-        cls._send("\n".join(lines))
+        card = format_status_card(
+            date_str=today,
+            anti_ban_status="OK",
+            cooldown_min=0,
+            stats={
+                "applications": len(EasyApplyEngine._load_history()),
+                "connections": eng_summary.get("connection", 0),
+                "invitations_accepted": len([r for r in AntiBanValidator._get_engagement_records() if "invitation" in r.get("detail", "").lower()]),
+                "interactions": len(today_posts) + eng_summary.get("comment", 0)
+            },
+            pending_jobs_count=len(_pending_easy_apply_jobs),
+            pending_actions_count=len(_pending_engagement_actions),
+            pending_invites_count=pending_inv_count
+        )
+        cls._send(card)
 
     @classmethod
     def cmd_scan(cls, custom_keywords: Optional[str] = None):
@@ -384,6 +386,48 @@ class TelegramBot:
         threading.Thread(target=_run, daemon=True).start()
 
     @classmethod
+    def cmd_invitations(cls):
+        """Escanea solicitudes de conexión entrantes en LinkedIn y permite aceptarlas."""
+        cls._send("🔍 Buscando solicitudes de conexión entrantes en LinkedIn...")
+
+        def _run():
+            try:
+                invites = InvitationManager.scan_inbound_invitations(max_scan=5)
+                if not invites:
+                    cls._send("ℹ️ No tienes solicitudes de conexión pendientes en este momento.")
+                    return
+
+                global _pending_invitations
+                _pending_invitations = invites
+                try:
+                    PENDING_INVITATIONS_FILE.write_text(
+                        json.dumps(_pending_invitations, indent=2, ensure_ascii=False),
+                        encoding="utf-8"
+                    )
+                except Exception:
+                    pass
+
+                cls._send(f"📬 *Se han detectado {len(invites)} solicitud(es) de conexión:*")
+
+                for idx, inv in enumerate(invites, 1):
+                    card_text = format_invitation_card(inv, index=idx, total=len(invites))
+                    inv_id = inv.get("id")
+                    name = inv.get("name", "Contacto")
+                    keyboard = {
+                        "inline_keyboard": [
+                            [
+                                {"text": f"✅ Aceptar a {name[:15]}", "callback_data": f"inv_accept:{inv_id}"},
+                                {"text": "❌ Omitir", "callback_data": f"inv_ignore:{inv_id}"}
+                            ]
+                        ]
+                    }
+                    cls._send(card_text, reply_markup=keyboard)
+            except Exception as e:
+                cls._send(format_simple_notification("Error en Invitaciones", f"No se pudo consultar las invitaciones: {str(e)[:250]}", level="error"))
+
+        threading.Thread(target=_run, daemon=True).start()
+
+    @classmethod
     def cmd_limits(cls):
         today = date.today().isoformat()
         pub_records = AntiBanValidator.get_records()
@@ -403,13 +447,13 @@ class TelegramBot:
         # Indicadores visuales
         for label, used, total in [
             ("Posts", today_posts, MAX_DAILY_POSTS),
-            ("Comments", eng.get("comment", 0), MAX_DAILY_COMMENTS),
-            ("Connects", eng.get("connection", 0), MAX_DAILY_CONNECTIONS),
-            ("Reactions", eng.get("reaction", 0), MAX_DAILY_REACTIONS),
+            ("Comentarios", eng.get("comment", 0), MAX_DAILY_COMMENTS),
+            ("Conexiones", eng.get("connection", 0), MAX_DAILY_CONNECTIONS),
+            ("Reacciones", eng.get("reaction", 0), MAX_DAILY_REACTIONS),
         ]:
-            filled = int((used / max(total, 1)) * 10)
-            bar = "█" * filled + "░" * (10 - filled)
-            lines.append(f"`{label:<10}` {bar}")
+            pct = int((used / max(total, 1)) * 100)
+            bar = render_progress_bar(pct, total_blocks=8)
+            lines.append(f"• *{label}:* `{bar}` ({used}/{total})")
 
         cls._send("\n".join(lines))
 
@@ -639,6 +683,10 @@ class TelegramBot:
             cls._handle_engage_decision(cb_id, target, chat_id, message_id)
         elif action == "apply":
             cls._handle_apply_decision(cb_id, target, chat_id, message_id)
+        elif action == "inv_accept":
+            cls._handle_invitation_decision(cb_id, target, accept=True, chat_id=chat_id, message_id=message_id)
+        elif action == "inv_ignore":
+            cls._handle_invitation_decision(cb_id, target, accept=False, chat_id=chat_id, message_id=message_id)
         elif action == "drafts" and target == "cleanup":
             cls._answer_callback(cb_id, "Limpiando borradores antiguos...")
             cls.cmd_clear_drafts()
@@ -847,6 +895,51 @@ class TelegramBot:
             _pending_easy_apply_jobs = []
             cls._answer_callback(cb_id, "Candidaturas canceladas.")
             cls._send("❌ Envío de candidaturas de Solicitud Sencilla cancelado.")
+
+    @classmethod
+    def _handle_invitation_decision(cls, cb_id: str, inv_id: str, accept: bool, chat_id: int, message_id: int):
+        global _pending_invitations
+        cls._remove_buttons(chat_id, message_id)
+
+        target_inv = None
+        for inv in _pending_invitations:
+            if inv.get("id") == inv_id:
+                target_inv = inv
+                break
+
+        name = target_inv.get("name", "Contacto") if target_inv else "Contacto"
+
+        if not accept:
+            cls._answer_callback(cb_id, f"Invitación de {name} omitida.")
+            cls._send(f"⚪ Has omitido la invitación de *{name}*.")
+            return
+
+        cls._answer_callback(cb_id, f"Aceptando a {name}...")
+        cls._send(f"⏳ Aceptando solicitud de conexión de *{name}* en LinkedIn...")
+
+        def _run():
+            try:
+                ok = InvitationManager.accept_invitation(invitation_id=inv_id, sender_name=name)
+                if ok:
+                    cls._send(format_simple_notification(
+                        "Conexión Aceptada",
+                        f"La invitación de *{name}* ha sido aceptada en LinkedIn y registrada en el historial anti-ban.",
+                        level="success"
+                    ))
+                else:
+                    cls._send(format_simple_notification(
+                        "Aviso de Red",
+                        f"No se pudo completar la aceptación de *{name}*. Puede haber sido retirada o bloqueada por límites.",
+                        level="warning"
+                    ))
+            except Exception as e:
+                cls._send(format_simple_notification(
+                    "Error de Aceptación",
+                    f"Detalle: {str(e)[:250]}",
+                    level="error"
+                ))
+
+        threading.Thread(target=_run, daemon=True).start()
 
     @staticmethod
     def _update_heartbeat():
@@ -1153,6 +1246,8 @@ class TelegramBot:
                         cls.cmd_publish(project_name=arg if arg else "")
                     elif cmd == "/engage":
                         cls.cmd_engage()
+                    elif cmd in ("/invitations", "/invites", "/solicitudes"):
+                        cls.cmd_invitations()
                     elif cmd == "/apply":
                         cls.cmd_apply(custom_keywords=arg if arg else None)
                     elif cmd == "/limits":
@@ -1187,6 +1282,7 @@ class TelegramBot:
             {"command": "drafts", "description": "Gestionar, publicar o borrar borradores"},
             {"command": "clear", "description": "Limpiar borradores antiguos o descartados"},
             {"command": "engage", "description": "Proponer 5 contactos Sevilla (2o grado)"},
+            {"command": "invitations", "description": "Ver y aceptar solicitudes de contacto recibidas"},
             {"command": "apply", "description": "Vacantes Solicitud Sencilla + CV adaptado"},
             {"command": "status", "description": "Dashboard de actividad del dia"},
             {"command": "health", "description": "Verificar sesion de LinkedIn"},
