@@ -174,7 +174,8 @@ class LinkedInPublisher:
                     else:
                         print("[⚠️] No se pudo adjuntar la galería de imágenes, continuando con publicación de texto.")
 
-                # 5. Escribir el texto en el editor (TipTap / ProseMirror / Quill)
+                # 5. Escribir el texto en el editor (TipTap / ProseMirror)
+                # Para evitar inversión de líneas o colapso de cursor en TipTap, insertamos el texto completo de una sola vez
                 print("[*] Escribiendo texto en el editor de LinkedIn...")
                 editor_selectors = [
                     "div.tiptap.ProseMirror[contenteditable='true']",
@@ -202,27 +203,18 @@ class LinkedInPublisher:
                     return False
 
                 try:
-                    box = editor_el.bounding_box()
-                    if box and box.get("width", 0) > 0 and box.get("height", 0) > 0:
-                        editor_el.click(force=True)
-                    else:
-                        editor_el.evaluate("el => el.focus()")
-                except Exception:
                     editor_el.evaluate("el => el.focus()")
+                except Exception:
+                    pass
                 time.sleep(0.5)
 
-                # Limpiar contenido previo del editor TipTap/ProseMirror
+                # Limpiar y escribir en orden correcto
                 page.keyboard.press("Meta+a")
                 page.keyboard.press("Backspace")
-                time.sleep(0.2)
+                time.sleep(0.3)
 
-                # Escribir línea por línea usando eventos reales de teclado ('Enter') para que TipTap cree nodos <p> reales
-                lines = text.split("\n")
-                for idx, line in enumerate(lines):
-                    if line:
-                        page.keyboard.insert_text(line)
-                    if idx < len(lines) - 1:
-                        page.keyboard.press("Enter")
+                # Insertar texto completo en bloque para no desordenar párrafos ni invertir el cursor
+                page.keyboard.insert_text(text)
                 time.sleep(2)
 
                 # 6. Pulsar Publicar
