@@ -3,6 +3,7 @@ import time
 import socket
 import subprocess
 import textwrap
+import re
 from pathlib import Path
 from typing import Optional
 from config import SCREENSHOTS_DIR, BROWSER_CHANNEL, CHROMIUM_EXECUTABLE_PATH
@@ -10,6 +11,32 @@ from playwright.sync_api import sync_playwright
 
 class ProjectCapturer:
     """Capturador de interfaces reales en vivo (web, dashboards, Swagger, tests/terminal) y código de repositorios."""
+
+    @staticmethod
+    def sanitize_text(text: str) -> str:
+        """
+        Oculta cualquier dato privado o sensible antes de renderizar capturas o publicaciones:
+        - Tokens de bot de Telegram y API keys (Gemini, OpenAI, Anthropic, AWS, GitHub)
+        - Rutas absolutas del sistema local (/Users/..., /home/...)
+        - IPs privadas, Tailscale y locales (100.x.x.x, 192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+        - Nombres de usuario locales en rutas de sistema
+        """
+        if not text:
+            return ""
+        # 1. Tokens de Telegram (ej. 123456789:ABCdef...)
+        text = re.sub(r'\b\d{8,11}:[A-Za-z0-9_-]{35}\b', '[REDACTED_TELEGRAM_TOKEN]', text)
+        # 2. Claves de API comunes (AIzaSy..., sk-..., ghp_..., gho_...)
+        text = re.sub(r'\bAIzaSy[A-Za-z0-9_-]{33}\b', '[REDACTED_API_KEY]', text)
+        text = re.sub(r'\bsk-[A-Za-z0-9_-]{20,}\b', '[REDACTED_API_KEY]', text)
+        text = re.sub(r'\bgh[pousr]_[A-Za-z0-9]{36}\b', '[REDACTED_GITHUB_TOKEN]', text)
+        # 3. IPs privadas y de Tailscale (100.64.0.0/10, 192.168.x.x, 10.x.x.x)
+        text = re.sub(r'\b100\.(?:[6-9][0-9]|1[0-1][0-9]|12[0-7])\.\d{1,3}\.\d{1,3}\b', '10.0.0.x', text)
+        text = re.sub(r'\b192\.168\.\d{1,3}\.\d{1,3}\b', '192.168.1.x', text)
+        text = re.sub(r'\b10\.\d{1,3}\.\d{1,3}\.\d{1,3}\b', '10.0.0.x', text)
+        # 4. Rutas absolutas a directorios de usuario (/Users/gabriel... o /Users/Gabriel...)
+        text = re.sub(r'/Users/[^/\s\n"\']+', '~/projects', text)
+        text = re.sub(r'/home/[^/\s\n"\']+', '~/projects', text)
+        return text
 
     @staticmethod
     def _launch_chromium(playwright_obj):
@@ -265,6 +292,7 @@ class ProjectCapturer:
         """Renderiza una captura realista de Terminal de macOS (iTerm2 / Terminal.app) a pantalla completa sin marcos artificiales."""
         import re
         output_path = SCREENSHOTS_DIR / filename
+        terminal_output = cls.sanitize_text(terminal_output)
         raw_lines = terminal_output.splitlines()[:24]
 
         formatted_lines = []
@@ -654,6 +682,7 @@ class ProjectCapturer:
         output_path = SCREENSHOTS_DIR / filename
 
         dedented = textwrap.dedent(code_snippet.strip("\n"))
+        dedented = cls.sanitize_text(dedented)
         raw_lines = dedented.rstrip().splitlines()[:28]
         highlighted_lines = cls._highlight_with_pygments(raw_lines, source_file)
 

@@ -1867,6 +1867,8 @@ class DevDiaryGenerator:
            - Viñetas a ras de margen ('• ') sin espacios previos que descuadren el sangrado en la app móvil de LinkedIn.
         """
         import re
+        from src.project_capturer import ProjectCapturer
+        text = ProjectCapturer.sanitize_text(text)
         text = text.replace("`", "")
         raw_lines = [line.strip() for line in text.strip().splitlines()]
 
