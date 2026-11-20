@@ -104,14 +104,11 @@ En [`src/linkedin_publisher.py`](src/linkedin_publisher.py), tras adjuntar captu
 
 La deduplicacion de publicaciones usa triple verificacion: `pill_id`, hash SHA-256 normalizado del contenido, y firma del titulo. Siempre pasar `include_active_drafts=True` al comprobar duplicados desde el pipeline de diario.
 
-### CV routing (ATSAnalyzer)
-Cuatro CVs PDF en `assets/cvs/`:
-- `GTV_CV_Sys_ES2026.pdf` — Linux, Redes, Ciberseguridad
-- `GTV_CV_IA_ES2026.pdf` — Python, FastAPI, IA
-- `GTV_CV_iOS_ES2026.pdf` — DAM, SwiftUI, Full-Stack
-- `GTV_CV_ES2026.pdf` — QA, SDET (CV general)
+### CV Routing (ATSAnalyzer)
+CV unificado en `assets/cvs/`:
+- `GTVCV_2027.pdf` — CV oficial actualizado (Software & Sistemas IT 2027)
 
-`ATSAnalyzer.analyze_match()` hace keyword matching con limites de palabra (`\b`), pondera triple si la keyword aparece en el titulo de la vacante, y calcula score 0-100.
+`ATSAnalyzer.analyze_match()` hace keyword matching con limites de palabra (`\b`), pondera triple si la keyword aparece en el titulo de la vacante, y calcula score 0-100 siempre referenciando `GTVCV_2027.pdf`.
 
 ### Persistencia de estado
 Todos los archivos JSON de estado viven en `data/` (git-excluido):

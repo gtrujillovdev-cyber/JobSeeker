@@ -18,38 +18,16 @@ def test_taxonomy_extraction():
     assert "git" in extracted.get("methodologies_tools", [])
 
 
-def test_ats_match_qa():
-    title = "Middle QA Automation Engineer (Playwright & Python)"
-    desc = "Automatización de pruebas E2E, testing funcional con Playwright y Pytest."
+def test_ats_match_unified_2027():
+    title = "Desarrollador Junior Python, Linux & Testing"
+    desc = "Buscamos desarrollador con Python, Docker, Linux y pruebas automáticas con Pytest/Playwright."
     
     analysis = ATSAnalyzer.analyze_match(title, desc)
-    assert analysis["best_cv"] == "GTV_CV_ES2026.pdf"
-    assert analysis["best_profile_key"] == "qa_sdet"
+    assert analysis["best_cv"] == "GTVCV_2027.pdf"
+    assert analysis["best_profile_key"] == "unified_2027"
     assert analysis["ats_score"] >= 80
     assert "ALTO MATCH" in analysis["tier_badge"]
-    assert "playwright" in analysis["matched_keywords"]
-
-
-def test_ats_match_ciberseguridad():
-    title = "Técnico Junior Ciberseguridad OT / Sistemas"
-    desc = "Administración de sistemas Linux, seguridad perimetral, ISO 27001, redes TCP/IP."
-    
-    analysis = ATSAnalyzer.analyze_match(title, desc)
-    assert analysis["best_cv"] == "GTV_CV_Sys_ES2026.pdf"
-    assert analysis["best_profile_key"] == "sys_cyber"
-    assert analysis["ats_score"] >= 85
-    assert "linux" in analysis["matched_keywords"]
-    assert "ciberseguridad" in analysis["matched_keywords"]
-
-
-def test_ats_match_mobile_dam():
-    title = "Desarrollador Multiplataforma DAM / SwiftUI"
-    desc = "Desarrollo de apps móviles con Swift, SwiftUI y JavaScript/TypeScript."
-    
-    analysis = ATSAnalyzer.analyze_match(title, desc)
-    assert analysis["best_cv"] == "GTV_CV_iOS_ES2026.pdf"
-    assert analysis["best_profile_key"] == "ios_dam"
-    assert analysis["ats_score"] >= 75
+    assert "python" in analysis["matched_keywords"]
 
 
 def test_ats_format_hr_report():

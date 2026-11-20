@@ -52,7 +52,7 @@ def test_format_job_card():
         "company": "CloudTech Solutions",
         "location": "Sevilla / Remoto",
         "ats_score": 85,
-        "cv_route": "GTV_CV_Sys_ES2026.pdf",
+        "cv_route": "GTVCV_2027.pdf",
         "matched_skills": ["Linux", "Kubernetes", "AWS", "Terraform"],
         "missing_skills": ["Ansible"]
     }
@@ -60,7 +60,7 @@ def test_format_job_card():
     assert "*OPORTUNIDAD DETECTADA* (1/5)" in card
     assert "CloudTech Solutions" in card
     assert "Senior DevOps Engineer" in card
-    assert "GTV_CV_Sys_ES2026.pdf" in card
+    assert "GTVCV_2027.pdf" in card
     assert "Linux, Kubernetes, AWS, Terraform" in card
 
 

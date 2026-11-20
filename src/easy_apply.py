@@ -28,54 +28,18 @@ ASSETS_CVS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Catálogo de perfiles reutilizando los PDFs oficiales existentes de Gabriel
 CV_PROFILES: Dict[str, Dict[str, Any]] = {
-    "sys_cyber": {
-        "key": "sys_cyber",
-        "label": "Sistemas Linux, Ciberseguridad & Infraestructura IT",
-        "linkedin_resume_name": "GTV_CV_Sys_ES2026.pdf",
-        "official_pdf_filename": "GTV_CV_Sys_ES2026.pdf",
-        "headline": "Técnico de Sistemas Linux, Ciberseguridad & Automatización Python (DAM)",
+    "unified_2027": {
+        "key": "unified_2027",
+        "label": "Gabriel Trujillo Vallejo — Desarrollador de Software & Sistemas IT (2027)",
+        "linkedin_resume_name": "GTVCV_2027.pdf",
+        "official_pdf_filename": "GTVCV_2027.pdf",
+        "headline": "Desarrollador de Software Junior · Python, Linux & Full-Stack (DAM)",
         "keywords": [
-            "linux", "sistemas", "systems", "ciberseguridad", "cybersecurity", "security",
-            "soc", "siem", "redes", "network", "infraestructura", "infrastructure", "devops",
-            "cloud", "docker", "bash", "support", "soporte", "helpdesk", "asir", "sysadmin",
-            "operador", "microinformática", "seguridad", "firewall", "pentest", "it"
-        ],
-    },
-    "qa_sdet": {
-        "key": "qa_sdet",
-        "label": "QA Automation, SDET & Testing con Playwright/Python",
-        "linkedin_resume_name": "GTV_CV_ES2026.pdf",
-        "official_pdf_filename": "GTV_CV_ES2026.pdf",
-        "headline": "QA Automation Engineer / SDET Junior · Python, Playwright & Pytest (DAM)",
-        "keywords": [
-            "qa", "sdet", "test", "testing", "tester", "playwright", "selenium", "cypress",
-            "calidad", "quality", "pytest", "e2e", "pruebas", "automatización de pruebas",
-            "automation", "bug", "regression", "jira"
-        ],
-    },
-    "ai_python": {
-        "key": "ai_python",
-        "label": "Desarrollo Python, Backend, Automatización & IA",
-        "linkedin_resume_name": "GTV_CV_IA_ES2026.pdf",
-        "official_pdf_filename": "GTV_CV_IA_ES2026.pdf",
-        "headline": "Python Backend & AI Automation Developer Junior (DAM)",
-        "keywords": [
-            "python", "ia", "ai", "inteligencia artificial", "llm", "rag", "fastapi",
-            "django", "flask", "backend", "data", "datos", "api", "bot", "machine learning",
-            "automatización", "pandas", "sql", "etl", "genai", "gemini", "openai"
-        ],
-    },
-    "ios_dam": {
-        "key": "ios_dam",
-        "label": "Desarrollo Multiplataforma (DAM), SwiftUI & Full-Stack",
-        "linkedin_resume_name": "GTV_CV_iOS_ES2026.pdf",
-        "official_pdf_filename": "GTV_CV_iOS_ES2026.pdf",
-        "headline": "Desarrollador de Aplicaciones Multiplataforma Junior (DAM) · SwiftUI, Python & Web",
-        "keywords": [
-            "dam", "multiplataforma", "ios", "swift", "swiftui", "mobile", "móvil",
-            "android", "kotlin", "java", "frontend", "fullstack", "full stack", "full-stack",
-            "javascript", "typescript", "react", "html", "css", "web", "desarrollador",
-            "programador", "software", "junior"
+            "python", "linux", "ciberseguridad", "cybersecurity", "security", "sistemas",
+            "redes", "network", "docker", "bash", "backend", "fastapi", "sql", "api", "ia",
+            "dam", "multiplataforma", "ios", "swift", "swiftui", "frontend", "fullstack",
+            "javascript", "typescript", "qa", "testing", "automation", "playwright", "pytest",
+            "git", "junior", "desarrollo", "software"
         ],
     }
 }
@@ -144,7 +108,7 @@ class EasyApplyEngine:
         ats_analysis = ATSAnalyzer.analyze_match(title, desc, stack)
 
         best_key = ats_analysis["best_profile_key"]
-        prof = CV_PROFILES.get(best_key, CV_PROFILES["sys_cyber"])
+        prof = CV_PROFILES.get(best_key, list(CV_PROFILES.values())[0])
 
         matched_str = ", ".join(ats_analysis["matched_keywords"][:5]) if ats_analysis["matched_keywords"] else "perfil DAM general"
         reason = f"Score ATS: {ats_analysis['ats_score']}% ({ats_analysis['tier_badge']}) · Keywords: {matched_str}"
@@ -273,9 +237,9 @@ class EasyApplyEngine:
         if "cv_profile_key" not in job:
             job.update(cls.select_best_cv_profile(job))
 
-        prof_key = job.get("cv_profile_key", "sys_cyber")
-        prof = CV_PROFILES.get(prof_key, CV_PROFILES["sys_cyber"])
-        pdf_name = prof.get("official_pdf_filename", "GTV_CV_ES2026.pdf")
+        prof_key = job.get("cv_profile_key", "unified_2027")
+        prof = CV_PROFILES.get(prof_key, list(CV_PROFILES.values())[0])
+        pdf_name = prof.get("official_pdf_filename", "GTVCV_2027.pdf")
         pdf_path = ASSETS_CVS_DIR / pdf_name
 
         if not pdf_path.exists():
@@ -891,7 +855,7 @@ class EasyApplyEngine:
             enabled = job.get("enabled", True)
             icon = "✅" if enabled else "⏭️ (Omitida)"
             cv_label = job.get("cv_label", "CV General IT")
-            cv_file = Path(job.get("cv_pdf_path", "")).name or job.get("cv_linkedin_name", "GTV_CV_ES2026.pdf")
+            cv_file = Path(job.get("cv_pdf_path", "")).name or job.get("cv_linkedin_name", "GTVCV_2027.pdf")
             ats = job.get("ats_analysis") or {}
             ats_score = ats.get("ats_score", job.get("cv_score", 85))
             tier_badge = ats.get("tier_badge", "🟢 ALTO MATCH")

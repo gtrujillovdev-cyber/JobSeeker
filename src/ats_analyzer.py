@@ -50,43 +50,19 @@ TECH_TAXONOMY = {
 }
 
 # CVs Oficiales y sus núcleos de especialización para el matching ATS
+# Configurado para utilizar exclusivamente el CV unificado 2027 (GTVCV_2027.pdf)
 CV_PROFILES_METADATA = {
-    "GTV_CV_Sys_ES2026.pdf": {
-        "profile_key": "sys_cyber",
-        "label": "Sistemas Linux, Ciberseguridad & Infraestructura IT",
+    "GTVCV_2027.pdf": {
+        "profile_key": "unified_2027",
+        "label": "Gabriel Trujillo Vallejo — Desarrollador de Software & Sistemas IT (2027)",
         "strong_keywords": [
-            "linux", "ciberseguridad", "cybersecurity", "seguridad", "grc", "iso 27001",
-            "ens", "soc", "redes", "networking", "tcp/ip", "dns", "firewall", "vpn", "ssh",
-            "docker", "bash", "shell", "infraestructura", "sysadmin", "sistemas", "ot", "scada", "soporte"
+            "python", "linux", "ciberseguridad", "cybersecurity", "seguridad", "redes",
+            "networking", "docker", "bash", "backend", "fastapi", "sql", "api", "ia", "ai",
+            "dam", "multiplataforma", "ios", "swift", "swiftui", "frontend", "fullstack",
+            "javascript", "typescript", "qa", "testing", "automation", "playwright", "pytest",
+            "git", "junior", "desarrollo", "software", "sistemas"
         ],
-        "weight_bias": 1.15
-    },
-    "GTV_CV_IA_ES2026.pdf": {
-        "profile_key": "ai_python",
-        "label": "Python Backend, IA & Automatización de Procesos",
-        "strong_keywords": [
-            "python", "ia", "ai", "llm", "rag", "fastapi", "django", "flask", "backend",
-            "data", "etl", "machine learning", "pandas", "automatización", "sql", "api", "gemini", "openai"
-        ],
-        "weight_bias": 1.15
-    },
-    "GTV_CV_iOS_ES2026.pdf": {
-        "profile_key": "ios_dam",
-        "label": "Desarrollo Multiplataforma (DAM), SwiftUI & Full-Stack",
-        "strong_keywords": [
-            "dam", "multiplataforma", "ios", "swift", "swiftui", "mobile", "android", "frontend",
-            "fullstack", "full stack", "full-stack", "typescript", "javascript", "react", "html", "css", "web"
-        ],
-        "weight_bias": 1.15
-    },
-    "GTV_CV_ES2026.pdf": {
-        "profile_key": "qa_sdet",
-        "label": "QA Automation, SDET & Software Developer General",
-        "strong_keywords": [
-            "qa", "testing", "automation", "playwright", "pytest", "selenium", "karate", "sdet",
-            "calidad", "test", "desarrollo", "software", "git", "scrum", "junior"
-        ],
-        "weight_bias": 1.10
+        "weight_bias": 1.20
     }
 }
 

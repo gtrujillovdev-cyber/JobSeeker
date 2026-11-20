@@ -16,8 +16,8 @@ class TestSelectBestCvProfile:
             "detected_stack": ["Python", "Playwright"]
         }
         res = EasyApplyEngine.select_best_cv_profile(job)
-        assert res["cv_profile_key"] == "qa_sdet"
-        assert res["cv_score"] > 0
+        assert res["cv_profile_key"] == "unified_2027"
+        assert res["cv_linkedin_name"] == "GTVCV_2027.pdf"
 
     def test_selects_sys_cyber_for_linux_security_jobs(self):
         job = {
@@ -27,8 +27,8 @@ class TestSelectBestCvProfile:
             "detected_stack": ["Linux", "Docker", "Bash"]
         }
         res = EasyApplyEngine.select_best_cv_profile(job)
-        assert res["cv_profile_key"] == "sys_cyber"
-        assert "Sistemas Linux" in res["cv_label"]
+        assert res["cv_profile_key"] == "unified_2027"
+        assert res["cv_linkedin_name"] == "GTVCV_2027.pdf"
 
     def test_selects_ai_python_for_backend_ai_jobs(self):
         job = {
@@ -38,8 +38,8 @@ class TestSelectBestCvProfile:
             "detected_stack": ["Python", "Fastapi", "SQL"]
         }
         res = EasyApplyEngine.select_best_cv_profile(job)
-        assert res["cv_profile_key"] == "ai_python"
-        assert "IA" in res["cv_linkedin_name"] or "AI" in res["cv_linkedin_name"]
+        assert res["cv_profile_key"] == "unified_2027"
+        assert res["cv_linkedin_name"] == "GTVCV_2027.pdf"
 
     def test_selects_ios_dam_for_mobile_multiplatform_jobs(self):
         job = {
@@ -49,15 +49,15 @@ class TestSelectBestCvProfile:
             "detected_stack": ["Swift", "Javascript"]
         }
         res = EasyApplyEngine.select_best_cv_profile(job)
-        assert res["cv_profile_key"] == "ios_dam"
-        assert "iOS" in res["cv_linkedin_name"]
+        assert res["cv_profile_key"] == "unified_2027"
+        assert res["cv_linkedin_name"] == "GTVCV_2027.pdf"
 
 
 class TestExistingOfficialCvSelection:
 
     def test_reutiliza_cv_existente(self, tmp_path):
         with patch("src.easy_apply.ASSETS_CVS_DIR", tmp_path):
-            sample_pdf = tmp_path / "GTV_CV_Sys_ES2026.pdf"
+            sample_pdf = tmp_path / "GTVCV_2027.pdf"
             sample_pdf.write_bytes(b"%PDF-1.4 dummy")
             job = {
                 "title": "Ingeniero Junior Ciberseguridad & Linux",
@@ -67,7 +67,7 @@ class TestExistingOfficialCvSelection:
             }
             pdf_path = EasyApplyEngine.get_existing_official_cv(job)
             assert pdf_path.exists()
-            assert pdf_path.name == "GTV_CV_Sys_ES2026.pdf"
+            assert pdf_path.name == "GTVCV_2027.pdf"
             assert job["cv_pdf_path"] == str(pdf_path)
 
 
