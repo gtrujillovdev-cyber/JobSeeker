@@ -375,12 +375,24 @@ class ProjectCapturer:
         try:
             with sync_playwright() as p:
                 browser = cls._launch_chromium(p)
-                page = browser.new_page(viewport={"width": 1200, "height": 675}, device_scale_factor=2)
+                page = browser.new_page(viewport={"width": 1200, "height": 675})
                 page.set_content(html, wait_until="domcontentloaded")
-                page.screenshot(path=str(output_path), timeout=15000)
+                time.sleep(0.3)
+                pdf_tmp = output_path.with_suffix(".tmp.pdf")
+                page.pdf(
+                    path=str(pdf_tmp),
+                    width="1200px",
+                    height="675px",
+                    print_background=True,
+                    margin={"top": "0px", "bottom": "0px", "left": "0px", "right": "0px"}
+                )
                 browser.close()
+                subprocess.run(["sips", "-s", "format", "png", str(pdf_tmp), "--out", str(output_path)], check=True, capture_output=True)
+                if pdf_tmp.exists():
+                    pdf_tmp.unlink()
+                print(f"[ProjectCapturer] [✓] Captura Terminal generada con motor Chromium real: {output_path}")
         except Exception as e:
-            print(f"[ProjectCapturer] Aviso capturando terminal con Playwright ({e}). Usando renderizador nativo Pillow...")
+            print(f"[ProjectCapturer] Aviso capturando terminal con Chromium ({e}). Usando renderizador Pillow...")
             cls._render_terminal_card_pillow(output_path, project_name, terminal_output)
         return output_path
 
@@ -1177,13 +1189,25 @@ class ProjectCapturer:
         try:
             with sync_playwright() as p:
                 browser = cls._launch_chromium(p)
-                page = browser.new_page(viewport={"width": 1280, "height": 760}, device_scale_factor=2)
+                page = browser.new_page(viewport={"width": 1280, "height": 760})
                 page.set_content(html_template, wait_until="domcontentloaded")
-                time.sleep(0.2)
-                page.screenshot(path=str(output_path), animations="disabled", timeout=15000)
+                time.sleep(0.3)
+                pdf_tmp = output_path.with_suffix(".tmp.pdf")
+                page.pdf(
+                    path=str(pdf_tmp),
+                    width="1280px",
+                    height="760px",
+                    print_background=True,
+                    margin={"top": "0px", "bottom": "0px", "left": "0px", "right": "0px"}
+                )
                 browser.close()
+                # Convertir PDF vectorial a PNG de alta fidelidad vía herramienta nativa de macOS (sips)
+                subprocess.run(["sips", "-s", "format", "png", str(pdf_tmp), "--out", str(output_path)], check=True, capture_output=True)
+                if pdf_tmp.exists():
+                    pdf_tmp.unlink()
+                print(f"[ProjectCapturer] [✓] Captura VS Code generada con motor Chromium real: {output_path}")
         except Exception as e:
-            print(f"[ProjectCapturer] Aviso capturando código con Playwright ({e}). Usando renderizador nativo Pillow...")
+            print(f"[ProjectCapturer] Aviso capturando código con Chromium ({e}). Usando renderizador Pillow...")
             cls._render_code_card_pillow(
                 output_path=output_path,
                 project_name=project_name,
