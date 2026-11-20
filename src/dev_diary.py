@@ -1947,9 +1947,10 @@ class DevDiaryGenerator:
     @classmethod
     def generate_diary_copy(cls, entry: Dict[str, Any]) -> str:
         """
-        Genera una nota del Diario de Desarrollo con voz 100% humana en primera persona:
-        - Título corto y natural en una sola línea ('Diario #3: ...') sin cortes tras '#X' ni etiquetas robóticas.
-        - Explicación directa de un problema real de programación/arquitectura y cómo se resolvió en el código.
+        Genera una nota técnica del Diario de Desarrollo optimizada para LinkedIn:
+        - Hook directo en primera línea (problema real, métrica o decisión técnica) sin títulos robóticos.
+        - Párrafos cortos para lectura móvil, sin enlaces salientes en el cuerpo (el repo va al primer comentario).
+        - Sin duplicar la línea 'Stack:' encima de los hashtags.
         """
         entry_num = entry["entry_number"]
         proj_short = entry["dir_name"].strip()
@@ -1957,7 +1958,7 @@ class DevDiaryGenerator:
         if headline.lower().startswith("diario"):
             title_line = headline
         else:
-            title_line = f"Diario #{entry_num}: {headline}"
+            title_line = headline
 
         project_intro = (entry.get("project_intro") or "").strip()
         context_paragraph = (entry.get("default_context") or "").strip()
@@ -1966,21 +1967,18 @@ class DevDiaryGenerator:
         lead_in = entry.get("pill_lead_in") or f"En {entry.get('source_file', 'el código')} lo resolví así:"
         pill_bullets = entry.get("pill_bullets", [])
         source_file = entry.get("source_file", "main.py")
-        repo_url = entry.get("repo_url", "").strip()
-        repo_line = f"Repositorio: {repo_url}\n\n" if repo_url else ""
-        stack_inline = " · ".join(entry["tech_stack"])
         topic_track = entry.get("topic_track", "programacion")
         track_tags = (
-            ["#Sistemas", "#Linux", "#Programacion", "#DesarrolloDeSoftware", "#SevillaTech"]
+            ["#Sistemas", "#Linux", "#DesarrolloDeSoftware"]
             if topic_track == "sistemas"
-            else ["#Programacion", "#DesarrolloDeSoftware", "#SevillaTech"]
+            else ["#Programacion", "#DesarrolloDeSoftware"]
         )
         base_tags = [f"#{t.replace(' ', '')}" for t in entry["tech_stack"][:3]]
         merged_tags = []
         for tg in base_tags + track_tags:
             if tg not in merged_tags:
                 merged_tags.append(tg)
-        hashtags = " ".join(merged_tags[:6])
+        hashtags = " ".join(merged_tags[:5])
 
         if pill_bullets and len(pill_bullets) >= 3:
             b1, b2, b3 = pill_bullets[0], pill_bullets[1], pill_bullets[2]
@@ -1989,6 +1987,7 @@ class DevDiaryGenerator:
             b2 = f"{entry.get('default_learning', '')}"
             b3 = "Dejé pruebas directas por consola para verificar cada cambio rápido."
 
+        pill_q = (entry.get("pill_question") or "").strip() or "¿Cómo soléis resolver esto en vuestros proyectos?"
         structured_pill_post = (
             f"{title_line}\n\n"
             f"{intro_blocks}\n\n"
@@ -1996,36 +1995,31 @@ class DevDiaryGenerator:
             f"• {b1}\n\n"
             f"• {b2}\n\n"
             f"• {b3}\n\n"
-            f"{repo_line}"
-            f"Stack: {stack_inline}\n\n"
+            f"{pill_q}\n\n"
             f"{hashtags}"
         )
         if GEMINI_API_KEY:
             try:
                 from google import genai
                 client = genai.Client(api_key=GEMINI_API_KEY)
-                pill_q = entry.get("pill_question", "")
                 focus_desc = (
                     "sistemas Linux/Unix, automatización y redes"
                     if topic_track == "sistemas"
                     else "programación, arquitectura limpia y desarrollo de software"
                 )
-                prompt = f"""Eres un desarrollador de software junior (DAM, Sevilla) en búsqueda activa de empleo IT que publica entradas técnicas en LinkedIn para mostrar solvencia en {focus_desc} ante equipos de ingeniería y recruiters.
-Reescribe esta entrada con voz natural en primera persona. Directo, técnico, cero clichés corporativos ni lenguaje infantil.
+                prompt = f"""Eres un desarrollador de software (DAM, Sevilla) publicando una nota técnica en LinkedIn para demostrar criterio real en {focus_desc} ante otros ingenieros y recruiters IT.
+Reescribe el contenido base con voz humana, directa y técnica en primera persona. Cero humo corporativo ("encantado de compartir", "apasionante") y cero lenguaje infantil ("trasteando", "cositas").
 
-REGLAS ESTRICTAS:
-- Primera línea OBLIGATORIA exacta: '{title_line}' (no la modifiques)
-- Enfoque 100% en {focus_desc}: destaca decisiones de código, debugging, testing o sistemas reales que interesen a un responsable técnico o de selección IT.
-- Línea en blanco entre cada viñeta '• ' y PROHIBIDO generar líneas con '•' vacío
-- Cada viñeta máximo 15 palabras / 110 caracteres, 1 sola idea
-- Párrafos cortos (máximo 2 frases). Sin texto apelotonado en móvil.
-- Mantén exactamente 3 bullets técnicos concretos y la línea 'Stack: {stack_inline}'
-{f"- Conserva la línea 'Repositorio: {repo_url}'" if repo_url else ""}
-- Cierra con esta pregunta exacta: {pill_q if pill_q else '¿Cómo soléis resolver esto en vuestros proyectos?'}
-- Última línea: exactamente '{hashtags}'
-- NO añadas explicaciones meta, comillas ni texto introductorio. Solo el post.
+REGLAS ESTRICTAS DE FORMATO Y ENGAGEMENT:
+1. HOOK (primera línea, máx. 110 caracteres): Una frase directa que exponga el problema real, el fallo que evitaste o el dato/métrica clave antes del "ver más". NO empieces con "Diario #X:" ni con títulos académicos.
+2. RITMO MÓVIL: Párrafos de máximo 1-2 frases cortas (<= 150 caracteres por bloque). Deja siempre línea en blanco entre párrafos.
+3. VIÑETAS: 3 bullets técnicos concretos con '• ' al inicio, máximo 15 palabras / 110 caracteres cada uno, y línea en blanco entre cada viñeta.
+4. SIN ENLACES NI REDUNDANCIAS: NO incluyas URLs (ni de GitHub) en el cuerpo del post; el enlace va en el primer comentario. NO pongas línea 'Stack: ...' porque ya van los hashtags al final.
+5. CIERRE: Cierra con una pregunta técnica concreta y natural para abrir debate (puedes usar o mejorar esta: "{pill_q}").
+6. HASHTAGS: Última línea exactamente '{hashtags}'.
+7. Devuelve SOLO el texto del post, sin comillas ni explicaciones meta.
 
-CONTENIDO BASE:
+CONTEXTO DEL PROYECTO (Entrada #{entry_num}, archivo {source_file}):
 {structured_pill_post}
 """
                 for model_name in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
@@ -2042,25 +2036,19 @@ CONTENIDO BASE:
     @classmethod
     def generate_first_comment(cls, entry: Dict[str, Any]) -> str:
         """
-        Genera el texto del PRIMER COMENTARIO que se publica automáticamente justo después del post:
-        incluye la URL real del repositorio de GitHub y una pregunta natural sobre el problema técnico.
+        Genera el PRIMER COMENTARIO del post con el enlace al repositorio y referencia al archivo clave,
+        sin repetir la pregunta de cierre del cuerpo principal.
         """
         repo_url = entry.get("repo_url", "").strip()
-        main_tech = entry["tech_stack"][0] if entry.get("tech_stack") else "Python"
         proj_name = entry["dir_name"].strip()
-        source_file = entry.get("source_file", "")
-        pill_question = entry.get("pill_question", "").strip()
-        if not pill_question:
-            pill_question = f"¿Cómo soléis resolver esto vosotros trabajando con {main_tech}?"
+        source_file = entry.get("source_file", "").strip()
 
         if repo_url:
-            file_ref = f" ({source_file})" if source_file else ""
-            return (
-                f"Dejo por aquí el repo de {proj_name} por si queréis echarle un ojo al código{file_ref}:\n"
-                f"{repo_url}\n\n"
-                f"{pill_question}"
-            )
-        return pill_question
+            file_ref = f" (archivo clave: {source_file})" if source_file else ""
+            return f"Código fuente de {proj_name}{file_ref}:\n{repo_url}"
+        if source_file:
+            return f"Implementación principal en {source_file} dentro de {proj_name}."
+        return ""
 
     @classmethod
     def _extract_dynamic_code_from_post(cls, repo_path: Path, post_text: str, entry: Dict[str, Any]) -> Dict[str, Any]:

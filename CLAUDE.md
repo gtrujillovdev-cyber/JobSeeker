@@ -82,17 +82,19 @@ main.py --dev-diary
   └── DevDiaryGenerator.prepare_daily_diary_draft()
         EDUCATIONAL_PILLS_BY_PROJECT (banco de pildoras en dev_diary.py)
         -> extrae snippet real del codigo fuente del proyecto
-        -> genera post educativo via Gemini
-        -> TelegramReviewer para aprobacion
+        -> genera post educativo via Gemini (hook directo, parrafos cortos, sin URLs en el cuerpo; enlace al repo en primer comentario)
+        -> TelegramReviewer para aprobacion o programacion (--publish-scheduled / bot)
         -> LinkedInPublisher
 ```
 
 ## Patrones criticos
 
-### Browser (todos los modulos usan esto)
+### Browser y LinkedInPublisher (todos los modulos usan browser_helper)
 `browser_helper.py::get_playwright_browser_context()` es el unico punto de entrada para Playwright. **Nunca instanciar `playwright.chromium` directamente en modulos de negocio.** Gestiona dos estrategias en orden de preferencia:
 1. `storage_clean.json` / `storage_state.json` — inyeccion de cookies (portable entre maquinas)
 2. `launch_persistent_context` con `BROWSER_PROFILE_DIR` (perfil local persistente)
+
+En [`src/linkedin_publisher.py`](src/linkedin_publisher.py), tras adjuntar capturas, el boton `Siguiente`/`Next` del modal se selecciona por texto exacto visible (evitando botones del feed en segundo plano) y el editor TipTap/ProseMirror se valida por `offsetParent !== null` y se enfoca via JS (`focus()`) cuando su ancho inicial es `0px`.
 
 ### Anti-ban
 `AntiBanValidator` (stateless, todo en disco) bloquea acciones si se supera el limite diario:

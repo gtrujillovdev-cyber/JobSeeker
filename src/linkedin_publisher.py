@@ -157,12 +157,18 @@ class LinkedInPublisher:
 
                     if uploaded:
                         time.sleep(3)
-                        next_btn = page.locator("button:has-text('Siguiente'), button:has-text('Next'), button[aria-label='Siguiente']").first
-                        if next_btn.count() > 0 and next_btn.is_visible():
+                        next_clicked = False
+                        for candidate in page.locator("button:has-text('Siguiente'), button:has-text('Next'), button[aria-label='Siguiente']").all():
                             try:
-                                next_btn.evaluate("el => el.click()")
+                                txt = (candidate.inner_text() or "").strip()
+                                aria = (candidate.get_attribute("aria-label") or "").strip()
+                                if (txt in ("Siguiente", "Next") or aria == "Siguiente") and candidate.is_visible():
+                                    candidate.evaluate("el => el.click()")
+                                    next_clicked = True
+                                    break
                             except Exception:
-                                next_btn.click(force=True)
+                                continue
+                        if next_clicked:
                             time.sleep(2)
                         print(f"[✓] {len(files_str_list)} imagen(es) adjuntada(s) con éxito.")
                     else:
@@ -181,9 +187,14 @@ class LinkedInPublisher:
                 editor_el = None
                 for e_sel in editor_selectors:
                     el = page.locator(e_sel).first
-                    if el.count() > 0 and el.is_visible():
-                        editor_el = el
-                        break
+                    if el.count() > 0:
+                        try:
+                            is_active = el.is_visible() or bool(el.evaluate("e => e.offsetParent !== null"))
+                        except Exception:
+                            is_active = False
+                        if is_active:
+                            editor_el = el
+                            break
 
                 if not editor_el:
                     print("[!] No se encontró el editor de texto de la publicación.")
@@ -191,7 +202,11 @@ class LinkedInPublisher:
                     return False
 
                 try:
-                    editor_el.click(force=True)
+                    box = editor_el.bounding_box()
+                    if box and box.get("width", 0) > 0 and box.get("height", 0) > 0:
+                        editor_el.click(force=True)
+                    else:
+                        editor_el.evaluate("el => el.focus()")
                 except Exception:
                     editor_el.evaluate("el => el.focus()")
                 time.sleep(0.5)
