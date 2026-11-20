@@ -1759,8 +1759,9 @@ class DevDiaryGenerator:
                 cls._save_history(history)
         except Exception:
             pass
-        slot_consuming = {"published", "pending_approval", "scheduled"}
-        published_history = [h for h in history if h.get("status") in slot_consuming]
+        # El número de entrada debe basarse ESTRICTAMENTE en publicaciones confirmadas como 'published'.
+        # Jamás incrementar el contador por borradores pendientes, cancelados o programados no ejecutados.
+        published_history = [h for h in history if h.get("status") == "published"]
         entry_number = len(published_history) + 1
         preferred_track = cls._preferred_topic_track(published_history)
 
