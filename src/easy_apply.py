@@ -336,12 +336,15 @@ class EasyApplyEngine:
                             const txt = (btn.innerText || '').trim();
                             if (!txt || txt.length < 25 || txt.length > 500) return;
                             if (!/Solicitud sencilla|Easy Apply/i.test(txt)) return;
+                            const compKey = btn.getAttribute('componentkey') || '';
+                            const mKey = compKey.match(/job-card-component-ref-(\\d+)/) || compKey.match(/(\\d{8,})/);
+                            const directHref = mKey ? ('https://www.linkedin.com/jobs/view/' + mKey[1] + '/') : '';
                             const lines = txt.split('\\n').map(l => l.trim()).filter(l => l && l !== 'Verificado' && !l.endsWith('(Verificado)'));
                             if (lines.length >= 3) {
                                 const title = lines[0].replace(/\\s*\\(Verificado\\)$/i, '').trim();
                                 const company = lines[1].trim();
                                 const loc = lines[2].trim();
-                                out.push({ type: 'sdui', title, company, location: loc, href: '', idx });
+                                out.push({ type: 'sdui', title, company, location: loc, href: directHref, idx });
                             }
                         });
                         return out;
@@ -360,8 +363,15 @@ class EasyApplyEngine:
                         if not job_url and card.get("type") == "sdui" and card.get("idx", -1) >= 0:
                             try:
                                 btn = role_btns.nth(card["idx"])
-                                if btn.count() > 0 and btn.is_visible():
-                                    btn.click(timeout=3000)
+                                if btn.count() > 0:
+                                    try:
+                                        btn.scroll_into_view_if_needed(timeout=2000)
+                                    except Exception:
+                                        pass
+                                    try:
+                                        btn.click(timeout=3000, force=True)
+                                    except Exception:
+                                        btn.evaluate("el => el.click()")
                                     time.sleep(1.2)
                                     m_id = re.search(r"currentJobId=(\d+)", page.url)
                                     if m_id:
@@ -848,30 +858,37 @@ class EasyApplyEngine:
     # ------------------------------------------------------------------
     @classmethod
     def _build_telegram_message_and_keyboard(cls, jobs: List[Dict[str, Any]]) -> Tuple[str, dict]:
-        lines = ["🎯 *VACANTES SOLICITUD SENCILLA (ATS MATCHING HR)*\n"]
+        first_cv_file = Path(jobs[0].get("cv_pdf_path", "")).name if jobs else "GTVCV_2027.pdf"
+        first_cv_label = jobs[0].get("cv_label", "CV General IT") if jobs else ""
+        header_cv = f"📄 CV: `{first_cv_file}`" + (f" · _{first_cv_label}_" if first_cv_label else "")
+
+        lines = [
+            f"💼 *Vacantes Easy Apply* · {len(jobs)} ofertas",
+            header_cv,
+            "━━━━━━━━━━━━━━━━━━━━━━"
+        ]
         toggle_row = []
 
         for i, job in enumerate(jobs, 1):
             enabled = job.get("enabled", True)
-            icon = "✅" if enabled else "⏭️ (Omitida)"
-            cv_label = job.get("cv_label", "CV General IT")
-            cv_file = Path(job.get("cv_pdf_path", "")).name or job.get("cv_linkedin_name", "GTVCV_2027.pdf")
+            icon = "✅" if enabled else "⏭️"
+            title = (job.get("title") or "Vacante IT").replace("[", "(").replace("]", ")")
+            company = job.get("company", "")
+            location = job.get("location", "")
+            url = job.get("url", "")
             ats = job.get("ats_analysis") or {}
             ats_score = ats.get("ats_score", job.get("cv_score", 85))
-            tier_badge = ats.get("tier_badge", "🟢 ALTO MATCH")
+            score_icon = "🟢" if ats_score >= 70 else ("🟡" if ats_score >= 45 else "🔴")
             matched_kws = ats.get("matched_keywords") or job.get("cv_matched_keywords") or []
-            gaps = ats.get("gaps") or []
 
-            lines.append(f"*{i}. {icon} {job.get('title', 'Vacante IT')}*")
-            lines.append(f"   🏢 {job.get('company', '')} · 📍 {job.get('location', '')}")
-            lines.append(f"   📊 *Score ATS:* `{ats_score}%` ({tier_badge})")
-            lines.append(f"   📄 *CV Oficial:* `{cv_file}` ({cv_label})")
+            title_link = f"[{title}]({url})" if url else f"*{title}*"
+            meta_parts = [p for p in [company, location] if p]
+            meta_str = " · ".join(meta_parts)
+
+            lines.append(f"*{i}.* {icon} {title_link}")
+            lines.append(f"   {meta_str} · {score_icon} `{ats_score}%`")
             if matched_kws:
-                lines.append(f"   🎯 *Match:* `{', '.join(matched_kws[:5])}`")
-            if gaps:
-                lines.append(f"   ⚠️ *Gaps:* `{', '.join(gaps[:3])}`")
-            if job.get("url"):
-                lines.append(f"   🔗 {job['url']}")
+                lines.append(f"   ✓ `{', '.join(matched_kws[:4])}`")
             lines.append("")
 
             toggle_row.append({
@@ -879,7 +896,7 @@ class EasyApplyEngine:
                 "callback_data": f"apply:toggle_{i - 1}"
             })
 
-        lines.append("Pulsa `#1..#5` para activar/desactivar ofertas o pulsa *Aplicar con CV adaptado*:")
+        lines.append("Pulsa `#1..#5` para omitir alguna y luego *Aplicar*:")
         keyboard_rows = []
         if toggle_row:
             keyboard_rows.append(toggle_row)
@@ -944,21 +961,24 @@ class EasyApplyEngine:
         skipped = [r for r in results if r.get("status") == "skipped"]
         errors = [r for r in results if r.get("status") == "error"]
 
-        lines = ["📋 *RESULTADO DE CANDIDATURAS (SOLICITUD SENCILLA)*\n"]
-        lines.append(f"✅ Enviadas con éxito: {len(success)}")
-        lines.append(f"⏭️ Omitidas: {len(skipped)}")
-        lines.append(f"❌ Errores: {len(errors)}\n")
+        lines = [
+            "📋 *Resultado Easy Apply*",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"✅ Enviadas: {len(success)}  ·  ⏭️ Omitidas: {len(skipped)}  ·  ❌ Errores: {len(errors)}",
+            ""
+        ]
 
         for r in success:
-            lines.append(f"🎯 *{r.get('title')}* — {r.get('company')}")
-            lines.append(f"   📄 CV enviado: `{r.get('cv_label', 'CV Adaptado')}`")
-            if r.get("url"):
-                lines.append(f"   🔗 {r['url']}")
+            title = (r.get("title") or "Vacante").replace("[", "(").replace("]", ")")
+            company = r.get("company", "")
+            url = r.get("url", "")
+            title_link = f"[{title}]({url})" if url else f"*{title}*"
+            lines.append(f"✅ {title_link} · {company}")
 
         if skipped:
-            lines.append("\nOmitidas:")
-            for r in skipped[:4]:
-                lines.append(f"  • {r.get('company')}: {r.get('reason', '?')}")
+            lines.append("\n⏭️ *Omitidas:*")
+            for r in skipped[:5]:
+                lines.append(f"  • {r.get('company', r.get('title', 'Oferta'))}: `{r.get('reason', '?')}`")
 
         text = "\n".join(lines)
         try:

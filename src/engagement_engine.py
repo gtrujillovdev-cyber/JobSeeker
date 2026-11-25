@@ -244,38 +244,38 @@ class EngagementEngine:
 
     @classmethod
     def _build_engagement_message_and_keyboard(cls, actions: List[Dict[str, Any]]) -> tuple[str, dict]:
-        lines = ["🎯 *CÍRCULO DE CONTACTOS EN SEVILLA (2º GRADO · CONTACTOS DE TUS CONTACTOS)*\n"]
         summary = AntiBanValidator.get_today_engagement_summary()
-        if summary:
-            lines.append("Actividad registrada hoy:")
-            for action_k, count in summary.items():
-                lines.append(f"  • {action_k}: {count}")
-            lines.append("")
+        today_conns = summary.get("connection", 0) if summary else 0
+        header = f"🤝 *Contactos Sevilla (2º grado)* · {len(actions)} propuestos"
+        if today_conns:
+            header += f" · Hoy: {today_conns}"
+
+        lines = [header, "━━━━━━━━━━━━━━━━━━━━━━"]
 
         toggle_row = []
         for i, action in enumerate(actions, 1):
             enabled = action.get("enabled", True)
-            state_icon = "✅" if enabled else "⏭️ (Omitido)"
-            person = action.get("target_name", "Responsable de Selección")
-            headline = action.get("target_headline", "RRHH / Selección")
-            mutual = action.get("mutual_info", "Contacto de 2º grado (contactos en común)")
+            state_icon = "✅" if enabled else "⏭️"
+            person = (action.get("target_name") or "Responsable de Selección").replace("[", "(").replace("]", ")")
+            company = (action.get("target_company") or "").replace("[", "(").replace("]", ")")
+            headline = (action.get("target_headline") or "RRHH / Selección").strip()
+            if len(headline) > 55:
+                headline = headline[:52] + "..."
             loc = action.get("location_info", "Sevilla")
             url = action.get("target_url", "")
-            note = action.get("note_text", "")
-            lines.append(f"*{i}. {state_icon} {action['target_company']}* ({action.get('target_role', '')[:45]})")
-            lines.append(f"   👤 *{person}* — {headline[:60]}")
-            lines.append(f"   🤝 *2º grado ({loc})*: _{mutual}_")
-            if url:
-                lines.append(f"   🔗 {url}")
-            if note:
-                lines.append(f"   ✉️ _{note}_")
+
+            person_link = f"[{person}]({url})" if url else f"*{person}*"
+            company_part = f" · *{company}*" if company else ""
+            lines.append(f"*{i}.* {state_icon} {person_link}{company_part}")
+            lines.append(f"   _{headline}_ · {loc}")
             lines.append("")
+
             toggle_row.append({
                 "text": f"{'✅' if enabled else '❌'} #{i}",
                 "callback_data": f"engage:toggle_{i - 1}"
             })
 
-        lines.append("Pulsa sobre `#1..#5` si quieres desmarcar alguno antes de enviar:")
+        lines.append("Pulsa `#1..#5` para omitir alguno y luego *Enviar*:")
         keyboard_rows = []
         if toggle_row:
             keyboard_rows.append(toggle_row)
@@ -688,37 +688,77 @@ class EngagementEngine:
                 if clicked_add_note:
                     try:
                         time.sleep(1.5)
-                        textarea = page.locator("div[role='dialog'] textarea[name='message'], div[role='dialog'] textarea#custom-message, div[role='dialog'] textarea").first
-                        if textarea.count() > 0:
-                            textarea.fill(note_to_send)
-                            time.sleep(0.8)
-                            clicked_send_note = page.evaluate("""() => {
-                                const btns = Array.from(document.querySelectorAll('div[role="dialog"] button'));
-                                const sendBtn = btns.find(b => {
-                                    if (b.disabled) return false;
-                                    const txt = (b.innerText || '').trim().toLowerCase();
-                                    const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
-                                    return txt === 'enviar' || txt === 'send' || aria.includes('enviar invitación') || aria.includes('send invitation');
-                                });
-                                if (sendBtn) { sendBtn.click(); return true; }
-                                return false;
-                            }""")
-                            if clicked_send_note:
-                                time.sleep(2.5)
-                                sent_ok = True
-                                note_used = note_to_send
+                        upsell_blocked = page.evaluate("""() => {
+                            const txt = (document.body.innerText || '').toLowerCase();
+                            return (
+                                txt.includes('no te quedan notas personalizadas') ||
+                                txt.includes('invitaciones personalizadas sin límites') ||
+                                txt.includes('no personalized') ||
+                                txt.includes('out of personalized') ||
+                                txt.includes('personalized invitations left')
+                            );
+                        }""")
+                        if upsell_blocked:
+                            print("  [Connect] [i] Cuota mensual de notas personalizadas agotada (LinkedIn Free); enviando sin nota...")
+                        else:
+                            textarea = page.locator("div[role='dialog'] textarea[name='message'], div[role='dialog'] textarea#custom-message, div[role='dialog'] textarea").first
+                            if textarea.count() > 0:
+                                textarea.fill(note_to_send)
+                                time.sleep(0.8)
+                                clicked_send_note = page.evaluate("""() => {
+                                    const btns = Array.from(document.querySelectorAll('div[role="dialog"] button'));
+                                    const sendBtn = btns.find(b => {
+                                        if (b.disabled) return false;
+                                        const txt = (b.innerText || '').trim().toLowerCase();
+                                        const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                                        return txt === 'enviar' || txt === 'send' || aria.includes('enviar invitación') || aria.includes('send invitation');
+                                    });
+                                    if (sendBtn) { sendBtn.click(); return true; }
+                                    return false;
+                                }""")
+                                if clicked_send_note:
+                                    time.sleep(2.5)
+                                    sent_ok = True
+                                    note_used = note_to_send
                         if not sent_ok:
-                            # Si LinkedIn bloqueó la nota (límite mensual Free), volver atrás al diálogo normal
-                            page.evaluate("""() => {
+                            # Volver atrás o recargar /preload/custom-invite/ si el upsell de Premium reemplazó el diálogo
+                            went_back = page.evaluate("""() => {
                                 const btns = Array.from(document.querySelectorAll('div[role="dialog"] button'));
                                 const backBtn = btns.find(b => {
                                     const txt = (b.innerText || '').trim().toLowerCase();
                                     const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
                                     return txt.includes('cancelar') || txt.includes('atrás') || aria.includes('cancelar') || aria.includes('atrás') || aria.includes('back');
                                 });
-                                if (backBtn) backBtn.click();
+                                if (backBtn) { backBtn.click(); return true; }
+                                return false;
                             }""")
-                            time.sleep(1.0)
+                            if went_back:
+                                time.sleep(1.0)
+                            has_no_note = page.evaluate("""() => {
+                                const btns = Array.from(document.querySelectorAll('div[role="dialog"] button, button'));
+                                return btns.some(b => {
+                                    if (b.disabled) return false;
+                                    const txt = (b.innerText || '').trim().toLowerCase();
+                                    const aria = (b.getAttribute('aria-label') || '').trim().toLowerCase();
+                                    return txt.includes('enviar sin nota') || txt.includes('send without a note') || aria.includes('enviar sin nota') || aria.includes('send without a note');
+                                });
+                            }""")
+                            if not has_no_note:
+                                if invite_href and "/preload/" in invite_href:
+                                    full_invite_url = invite_href if invite_href.startswith("http") else f"https://www.linkedin.com{invite_href}"
+                                    page.goto(full_invite_url, wait_until="domcontentloaded", timeout=25000)
+                                    time.sleep(2.5)
+                                elif connect_btn is not None:
+                                    page.evaluate("""() => {
+                                        const dismiss = document.querySelector('div[role="dialog"] button[aria-label="Descartar"], div[role="dialog"] button[aria-label="Dismiss"]');
+                                        if (dismiss) dismiss.click();
+                                    }""")
+                                    time.sleep(1.0)
+                                    try:
+                                        connect_btn.click(timeout=5000)
+                                    except Exception:
+                                        connect_btn.evaluate("el => el.click()")
+                                    time.sleep(2.0)
                     except Exception:
                         pass
 
@@ -756,6 +796,7 @@ class EngagementEngine:
                 if (dismiss) dismiss.click();
             }""")
 
+            print(f"  [Connect] [!] Saltado {profile_name} ({company}): send_button_not_enabled_in_dialog")
             return {**action, "status": "skipped", "reason": "send_button_not_enabled_in_dialog"}
 
         except Exception as e:
@@ -859,24 +900,27 @@ class EngagementEngine:
         skipped = [r for r in results if r.get("status") == "skipped"]
         errors = [r for r in results if r.get("status") == "error"]
 
-        lines = [f"*RESULTADO DEL ENGAGEMENT*\n"]
-        lines.append(f"Exitosos: {len(success)}")
-        lines.append(f"Omitidos: {len(skipped)}")
-        lines.append(f"Errores: {len(errors)}\n")
+        lines = [
+            "🤝 *Resultado de Contactos*",
+            "━━━━━━━━━━━━━━━━━━━━━━",
+            f"✅ Exitosos: {len(success)}  ·  ⏭️ Omitidos: {len(skipped)}  ·  ❌ Errores: {len(errors)}",
+            ""
+        ]
 
         for r in success:
             emoji = {"comment": "💬", "connection": "🤝", "reaction": "👍"}.get(r["type"], "✅")
-            person = r.get("target_name", "")
+            person = (r.get("target_name") or "").replace("[", "(").replace("]", ")")
             url = r.get("target_url", "")
-            person_str = f" ({person})" if person and person != "Responsable de Selección" else ""
-            lines.append(f"{emoji} {r['type']} -> {r['target_company']}{person_str}")
-            if url:
-                lines.append(f"   🔗 {url}")
+            company = r.get("target_company", "")
+            label = f"[{person}]({url})" if (person and url) else (person or company)
+            tail = f" ({company})" if person and company else ""
+            lines.append(f"{emoji} {label}{tail}")
 
         if skipped:
-            lines.append("\nOmitidos:")
-            for r in skipped[:3]:
-                lines.append(f"  - {r['target_company']}: {r.get('reason', '?')}")
+            lines.append("\n⏭️ *Omitidos:*")
+            for r in skipped[:5]:
+                who = r.get("target_name") or r.get("target_company", "Contacto")
+                lines.append(f"  • {who}: `{r.get('reason', '?')}`")
 
         session_err = any(r.get("reason") == "session_expired" for r in results)
         if session_err:
