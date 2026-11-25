@@ -2010,16 +2010,19 @@ class DevDiaryGenerator:
                     if topic_track == "sistemas"
                     else "programación, arquitectura limpia y desarrollo de software"
                 )
-                prompt = f"""Eres un desarrollador de software (DAM, Sevilla) publicando una nota técnica en LinkedIn para demostrar criterio real en {focus_desc} ante otros ingenieros y recruiters IT.
-Reescribe el contenido base con voz humana, directa y técnica en primera persona. Cero humo corporativo ("encantado de compartir", "apasionante") y cero lenguaje infantil ("trasteando", "cositas").
+                prompt = f"""Eres un desarrollador de software (DAM, Sevilla) contando un problema técnico real en LinkedIn para atraer a otros ingenieros y tech leads.
+Escribe en español natural de España, en primera persona, con ritmo ágil y voz propia: como si le contaras a un compañero senior qué se rompió o qué cuello de botella encontraste y cómo lo dejaste resuelto.
+Cero humo corporativo ("encantado de compartir", "apasionante"), cero lenguaje infantil ("trasteando", "cositas") y cero frases robóticas o traducidas del inglés.
 
-REGLAS ESTRICTAS DE FORMATO Y ENGAGEMENT:
-1. HOOK (primera línea, máx. 110 caracteres): Una frase directa que exponga el problema real, el fallo que evitaste o el dato/métrica clave antes del "ver más". NO empieces con "Diario #X:" ni con títulos académicos.
-2. RITMO MÓVIL: Párrafos de máximo 1-2 frases cortas (<= 150 caracteres por bloque). Deja siempre línea en blanco entre párrafos.
-3. VIÑETAS: 3 bullets técnicos concretos con '• ' al inicio, máximo 15 palabras / 110 caracteres cada uno, y línea en blanco entre cada viñeta.
-4. SIN ENLACES NI REDUNDANCIAS: NO incluyas URLs (ni de GitHub) en el cuerpo del post; el enlace va en el primer comentario. NO pongas línea 'Stack: ...' porque ya van los hashtags al final.
-5. CIERRE: Cierra con una pregunta técnica concreta y natural para abrir debate (puedes usar o mejorar esta: "{pill_q}").
-6. HASHTAGS: Última línea exactamente '{hashtags}'.
+REGLAS ESTRICTAS DE ENGAGEMENT Y FORMATO:
+1. APERTURA EN 2 GOLPES (antes del "ver más"):
+   - Línea 1 (máx. 105 caracteres): un dato concreto, un bug real o una verdad incómoda del día a día (ej. "Docker mata tu proceso con SIGKILL a los 10s si ignoras SIGTERM."). NO empieces con "Diario #X:" ni con un título académico.
+   - Línea 2 (tras línea en blanco): añade tensión o contexto real en 1 frase corta, SIN repetir la idea de la línea 1.
+2. HISTORIA BREVE (1-2 frases): por qué importaba este fallo en el proyecto real (pérdida de datos, latencia, bloqueos, falsos positivos) y qué decisión tomaste en `{source_file}`.
+3. VIÑETAS CON IMPACTO: exactamente 3 bullets con '• ' al inicio (máx. 15 palabras / 110 caracteres cada uno, con línea en blanco entre ellos). Prioriza verbos de acción, métricas o el "antes → después" frente a descripciones genéricas.
+4. SIN ENLACES NI REDUNDANCIAS: NO incluyas URLs en el cuerpo (el repo va en el primer comentario). NO pongas línea 'Stack: ...'. Revisa ortografía española (ej. "vuelco", nunca "volco").
+5. CIERRE QUE GENERE DEBATE: termina con una pregunta directa y con opinión/elección práctica (ej. "¿Preferís X o Y en producción?" / "¿Os ha tumbado algún contenedor por esto?"), usando o mejorando: "{pill_q}".
+6. HASHTAGS: última línea exactamente '{hashtags}'.
 7. Devuelve SOLO el texto del post, sin comillas ni explicaciones meta.
 
 CONTEXTO DEL PROYECTO (Entrada #{entry_num}, archivo {source_file}):

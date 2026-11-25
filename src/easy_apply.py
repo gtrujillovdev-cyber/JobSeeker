@@ -692,6 +692,20 @@ class EasyApplyEngine:
 
         return cv_uploaded
 
+    @staticmethod
+    def _safe_click(locator, timeout: int = 5000) -> None:
+        """Hace scroll centrado y clic JS directo para contenedores SDUI con scroll propio."""
+        try:
+            locator.evaluate("el => { el.scrollIntoView({block: 'center', inline: 'center'}); el.click(); }")
+            return
+        except Exception:
+            pass
+        try:
+            locator.scroll_into_view_if_needed(timeout=3000)
+        except Exception:
+            pass
+        locator.click(timeout=timeout, force=True)
+
     @classmethod
     def apply_to_job(cls, page, job: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -727,7 +741,7 @@ class EasyApplyEngine:
             if easy_btn.count() == 0 or not easy_btn.is_visible():
                 return {**job, "status": "skipped", "reason": "no_easy_apply_button"}
 
-            easy_btn.click()
+            cls._safe_click(easy_btn, timeout=8000)
             time.sleep(2.2)
 
             all_dialogs = page.locator("dialog[open], dialog, div[role='dialog']")
@@ -735,7 +749,7 @@ class EasyApplyEngine:
             for d_idx in range(all_dialogs.count()):
                 cand = all_dialogs.nth(d_idx)
                 try:
-                    if cand.is_visible() and cand.locator("button").count() > 0:
+                    if cand.locator("button").count() > 0 and (cand.inner_text() or "").strip():
                         dialog = cand
                         break
                 except Exception:
@@ -754,8 +768,8 @@ class EasyApplyEngine:
                     "button[aria-label*='Enviar solicitud'], button:has-text('Enviar solicitud'), "
                     "button[aria-label*='Submit application'], button:has-text('Submit application')"
                 ).first
-                if submit_btn.count() > 0 and submit_btn.is_visible() and submit_btn.is_enabled():
-                    submit_btn.click()
+                if submit_btn.count() > 0 and submit_btn.is_enabled():
+                    cls._safe_click(submit_btn, timeout=8000)
                     time.sleep(3.5)
 
                     # Captura de pantalla de confirmación
@@ -783,13 +797,13 @@ class EasyApplyEngine:
                     "button[aria-label*='Continue'], button:has-text('Next')"
                 ).first
 
-                if next_btn.count() > 0 and next_btn.is_visible() and next_btn.is_enabled():
+                if next_btn.count() > 0 and next_btn.is_enabled():
                     prev_text = ""
                     try:
                         prev_text = dialog.inner_text()[:300]
                     except Exception:
                         pass
-                    next_btn.click()
+                    cls._safe_click(next_btn, timeout=8000)
                     time.sleep(1.6)
 
                     # Si el paso no avanzó por un campo requerido con error, re-intentar rellenar
@@ -801,20 +815,20 @@ class EasyApplyEngine:
                     if curr_text == prev_text:
                         cls._fill_dialog_fields(page, dialog, job, cv_uploaded)
                         time.sleep(0.5)
-                        if next_btn.is_visible() and next_btn.is_enabled():
-                            next_btn.click()
+                        if next_btn.count() > 0 and next_btn.is_enabled():
+                            cls._safe_click(next_btn, timeout=8000)
                             time.sleep(1.5)
                 else:
                     break
 
             # Cerrar modal si no se pudo completar
             close_btn = dialog.locator("button[aria-label='Descartar'], button[aria-label='Dismiss']").first
-            if close_btn.count() > 0 and close_btn.is_visible():
-                close_btn.click()
+            if close_btn.count() > 0:
+                cls._safe_click(close_btn, timeout=5000)
                 time.sleep(0.8)
                 discard_btn = page.locator("button:has-text('Descartar'), button:has-text('Discard')").first
-                if discard_btn.count() > 0 and discard_btn.is_visible():
-                    discard_btn.click()
+                if discard_btn.count() > 0:
+                    cls._safe_click(discard_btn, timeout=5000)
 
             cls.record_application(job, status="skipped", reason="complex_form_steps")
             return {**job, "status": "skipped", "reason": "max_steps_exceeded"}

@@ -46,11 +46,12 @@ class CopyGenerator:
 
                 ESTRUCTURA OBLIGATORIA (optimizada para el algoritmo de LinkedIn):
 
-                1. HOOK (primera línea): Una frase impactante, un dato concreto o una pregunta técnica.
-                   Esto es lo que se ve ANTES del "ver más". Si no engancha aquí, nadie lee el resto.
-                   Ejemplos buenos: "Una búsqueda con 'in' nos daba falsos positivos entre Java y JavaScript." / "Separar el recolector del servidor REST evitó bloqueos en disco."
+                1. APERTURA EN 2 GOLPES (antes del "ver más"):
+                   - Línea 1 (máx. 105 caracteres): un bug real, una métrica llamativa o una afirmación contraintuitiva que pique la curiosidad.
+                   - Línea 2 (tras línea en blanco): amplía la tensión o el impacto real sin repetir la línea 1.
+                   Ejemplos buenos: "Una búsqueda con 'in' nos daba falsos positivos entre Java y JavaScript." / "Separar el recolector del servidor REST nos quitó bloqueos de disco en producción."
 
-                2. CONTEXTO DEL PROBLEMA (2-3 líneas): Qué problema real encontraste en producción. Sin preámbulos.
+                2. HISTORIA Y CONTEXTO (2-3 líneas): Qué se rompía o frenaba el sistema y por qué importaba. Español natural de España, sin sonar traducido del inglés.
 
                 3. QUÉ HICISTE (3-4 líneas): Decisión técnica e implementación. Sé concreto: nombra tecnologías, patrones, métricas.
 
